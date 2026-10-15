@@ -78,7 +78,7 @@ namespace Tauntastic.Packages.Editor
 
         /// <summary>
         /// Optional GitHub personal access token with read access to repository contents, used to check private repositories.
-        /// Stored in plain text in this machine's EditorPrefs and only ever sent to raw.githubusercontent.com.
+        /// Stored in plain text in this machine's EditorPrefs and only ever sent to GitHub (api.github.com).
         /// </summary>
         public static string GitHubToken
         {

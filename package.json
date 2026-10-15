@@ -1,6 +1,6 @@
 {
   "name": "com.tauntastic.packages",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "displayName": "Tauntastic.Packages",
   "description": "Tells you when a newer version of an installed Tauntastic git package is available on GitHub, lists Tauntastic packages you can still install, and shows their dependencies, all in one window",
   "unity": "2023.2",

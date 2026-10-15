@@ -2,7 +2,7 @@
 
 Tells you when a newer version of an installed Tauntastic package is available. Unity's Package Manager does not notify you about updates of packages installed from a git URL; this package fills that gap with a version checker, an Updates window and one-click updates.
 
-- Package: `com.tauntastic.packages` (v1.5.0, Unity 2023.2+)
+- Package: `com.tauntastic.packages` (v1.6.0, Unity 2023.2+)
 - Assembly / namespace: `Tauntastic.Packages.Editor` (Editor-only)
 - Dependencies: none
 - AI agents: see [ARTIFICIAL_INTELLIGENCE_README.md](ARTIFICIAL_INTELLIGENCE_README.md)
@@ -34,8 +34,13 @@ Which branch is followed:
 ## Using it
 
 - **Tools > Tauntastic > Packages > Updates** (always the first entries of the Tauntastic menu) - the Updates window: installed vs. latest version, status, **Update**, **Changelog** and **Repository** buttons, **Check now**.
+- **Collapsing:** each package row is a foldout: click its header to collapse it to a single line that still shows the name, the versions and the flags. **Expand all** and **Collapse all** in the toolbar do it for every package. The state is kept when scripts reload.
 - **Tools > Tauntastic > Packages > Check For Updates** - runs a check immediately and always reports the outcome.
 - **Preferences > Tools > Tauntastic > Packages** - switch the automatic check on or off, set the hours between checks, choose whether the window opens by itself, list installable packages (and the GitHub owner to search) and set the GitHub token.
+
+## Update all
+
+Two toolbar buttons work through the pending packages in one go: **Update all (N)** updates the installed packages that are `UPDATE AVAILABLE`, and **Install all (N)** installs the `INSTALLABLE` ones. Each button only exists while there is something for it to do, so in a project where every package is source code (`SOURCE CODE` / `SOURCE FOLDER`) and nothing is outdated, neither appears. Packages that are up to date, failed or source code are never included. It first shows the list for confirmation, in this order: the top of the dependency tree first (grandparents), then their dependencies (parents), then the deepest dependencies (grandchildren); packages on the same level are sorted by name. The packages are added to the Package Manager in a single operation, so Unity resolves them together and reloads scripts once; if it fails, nothing is changed.
 
 ## Installable packages
 
@@ -52,6 +57,21 @@ Discovery uses the GitHub API (at most one request per 100 repositories, plus on
 If the project already contains the folder of a package (this is the case in the source project where you develop the packages), that package is **not** offered for installation. It gets the `SOURCE CODE` flag instead, an info box with the message "the folder for this package already exists in the project" and the folder path; the row shows **Installed in folder** with the folder path and, on the next line, **Source code version** with the version written in the folder's `package.json` and an **Open folder** button that selects the folder in the Project window. There is no Install button for these packages.
 
 The project is scanned for `package.json` files under `Assets/` and `Packages/` once per check. A folder counts as the package when any of these match: the `name` in its `package.json`, the repository in its `repository.url`, or the folder name (`com.tauntastic.x` for the package `com.tauntastic.x`, or for the repository `Tauntastic.X`).
+
+### Source ahead, commit and push
+
+When the version in a source code folder is **higher than the version in the repository** (the `Latest` shown), the package is an update for the repository: it gets the orange `SOURCE AHEAD: UPDATE` flag, is counted in the summary strip and in the tab title, and a warning explains that it must be committed and pushed.
+
+Every source code row has a **Git** dropdown, and the toolbar gets a **Source code** dropdown while anything is eligible:
+
+| Item | Does |
+|---|---|
+| Commit if eligible | `git add -A` and commit when the folder has uncommitted changes. |
+| Push if eligible | Push to `origin` when there are commits that are not pushed (or the branch is not on the remote yet). |
+| Commit & Push if eligible | Both, one after the other. |
+| Commit all / Push all / Commit & Push all if eligible (toolbar) | The same for every eligible source code package, from the top of the dependency tree to the bottom, after a confirmation list. |
+
+Items that would do nothing are greyed out with the reason. The commit message is the `version` in the package's `package.json`. Git runs in the background (the package folder must be the root of its own git repository with an `origin` remote); the row shows its state, for example `main: 3 changed files, 1 commit not pushed`. Git is found on the PATH, in the usual install folders, or inside GitHub Desktop. Pushing needs git to be signed in to GitHub; a password prompt is never shown, a failure is logged instead. GitHub caches raw files for a few minutes, so after a push the window shows the new version immediately, but another scan may still read the old one for a moment.
 
 ## Dependencies foldout
 
@@ -71,7 +91,9 @@ Each package row has a colored flag, a tinted background and a colored edge. A s
 | `UPDATE AVAILABLE` | orange | A newer version is on the branch. |
 | `INSTALLABLE` | teal | A Unity package of your GitHub account that is not installed in this project. |
 | `SOURCE CODE` | indigo | A package of your GitHub account whose folder already exists in this project, so it is not installed from git. |
-| `PRIVATE` | dark gray | Extra flag: the repository is private. |
+| `SOURCE AHEAD: UPDATE` | orange | Extra flag on a source code package whose version is higher than the version in the repository: commit and push it. |
+| `PRIVATE` | dark gray | Extra flag: the GitHub repository is private. |
+| `PUBLIC` | green | Extra flag: the GitHub repository is public. Shown for every package whose repository is in the repository list of the configured owner (installed ones too); not shown when the repository is not in the list, for example a private repository without a token. |
 | `CHECKING` | gray | The request is still running. |
 | `NOT FOUND / PRIVATE` | red | HTTP 404: the repository or its package.json does not exist, or it is private and no token (or one without access) was sent. |
 | `TOKEN REJECTED` | purple | HTTP 401 or 403: GitHub refused the request or the token. |
@@ -83,6 +105,12 @@ Each package row has a colored flag, a tinted background and a colored edge. A s
 - Only GitHub HTTPS git URLs are supported. Packages from a registry are already handled by the Package Manager, and packages inside `Assets/` or `Packages/` folders have no remote to check.
 - A package can only be reported if its `package.json` version is raised when you release. Bump the version (and write the `CHANGELOG.md` entry) before pushing.
 - A private GitHub repository can only be checked with a token: create a fine-grained personal access token with read-only **Contents** access to those repositories and paste it into **Preferences > Tools > Tauntastic > Packages > GitHub token**. When a token is set, checks go through the GitHub API (`api.github.com`) so errors are explicit; the window then appends what GitHub says (for example "Bad credentials" or "Not Found"). The token is stored in plain text in this machine's EditorPrefs (never in the project) and is only sent to GitHub. A fine-grained token must use the repository owner as **resource owner**, list the repositories, and have **Contents: Read-only** (organisations may need to approve it); a classic token needs the `repo` scope. Without it, a private repository shows "Not found. The repository does not exist or is private" in the window.
+
+## Testing the token
+
+**Preferences > Tools > Tauntastic > Packages > Test token** sends one request to GitHub with the saved token and shows whether GitHub accepts it, the rate limit it gets (5000 per hour for a valid token, 60 without) and when it expires. Below the field the saved token is described without being revealed: its length, its kind (`github_pat_` fine-grained or `ghp_` classic) and its last four characters, with a warning if it contains a space, a line break or another character that does not belong in a token. A `TOKEN REJECTED` row in the window shows the same description, so you can compare it with the token on GitHub (a fine-grained token is 93 characters long). "Bad credentials" with a token that is valid on GitHub almost always means the saved text differs from the real token (a missing character, an extra symbol, or an old token that was regenerated).
+
+**Test clipboard** tests the text on the clipboard without saving it and says whether it is identical to the saved token (and, if not, how long each is and where they first differ). Copy the token with the copy icon on GitHub, then press it: if the clipboard text is accepted but the saved token is not, the saving went wrong; if both are rejected, GitHub does not accept the token itself.
 
 ## API
 
@@ -96,6 +124,8 @@ foreach (PackageUpdateInfo info in PackageUpdateChecker.Results)
 PackageUpdateChecker.Changed += () => { /* results changed */ };
 PackageUpdateChecker.Update(info);              // install the latest version of an installed package
 PackageUpdateChecker.Install(info);             // install a package with Status == Installable
+PackageUpdateChecker.GetPendingInTreeOrder();   // updatable + installable packages, top of the dependency tree first
+PackageUpdateChecker.UpdateAll();               // update and install them all in one Package Manager operation
 PackageUpdateChecker.GetDependencies(info);     // child dependencies (direct and indirect)
 PackageUpdateChecker.GetDependents(info);       // parent dependencies (what depends on it)
 PackageVersion.IsNewer("1.2.0", "1.1.0");       // true

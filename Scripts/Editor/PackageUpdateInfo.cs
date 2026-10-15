@@ -60,8 +60,23 @@ namespace Tauntastic.Packages.Editor
         /// <summary>Version written in the package.json of the source code, or an empty string.</summary>
         public string SourceFolderVersion;
 
-        /// <summary>True when the repository is private (only known for packages found through the GitHub repository list).</summary>
+        /// <summary>Full path of the source code folder on disk (for status SourceFolder), or null.</summary>
+        public string SourceFolderAbsolutePath;
+
+        /// <summary>True when the version in the source code folder is higher than the version in the GitHub repository, so the repository needs this update (commit and push it).</summary>
+        public bool SourceAhead;
+
+        /// <summary>The git state of the source code folder (uncommitted changes, unpushed commits); null until it was read.</summary>
+        public GitState Git;
+
+        /// <summary>True while a commit or push of this source folder is running.</summary>
+        public bool IsGitBusy;
+
+        /// <summary>True when the repository is private. Only meaningful when <see cref="IsVisibilityKnown"/> is true.</summary>
         public bool IsPrivateRepository;
+
+        /// <summary>True when the GitHub repository list told whether the repository is private or public; false when the repository was not in the list (for example no token and the repository is private, or discovery is off).</summary>
+        public bool IsVisibilityKnown;
 
         /// <summary>Description from the package.json (or the repository when the package.json has none).</summary>
         public string Description;

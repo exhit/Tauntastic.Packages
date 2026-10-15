@@ -260,6 +260,24 @@ namespace Tauntastic.Packages.Editor
         /// <summary>For every repository of the owner named Tauntastic.* that is not installed, reads its package.json to find out whether it is a Unity package.</summary>
         private static void StartCandidateRequests()
         {
+            // The repository list also tells whether each installed package's repository is private or public.
+            foreach (PackageUpdateInfo installed in _results)
+            {
+                if (!installed.IsInstalled || installed.Reference == null)
+                    continue;
+
+                foreach (GitHubRepository listed in _repositories)
+                {
+                    if (string.Equals(listed.Owner, installed.Reference.Owner, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(listed.Name, installed.Reference.Repository, StringComparison.OrdinalIgnoreCase))
+                    {
+                        installed.IsPrivateRepository = listed.IsPrivate;
+                        installed.IsVisibilityKnown = true;
+                        break;
+                    }
+                }
+            }
+
             string owner = PackageUpdateSettings.GitHubOwner;
 
             foreach (GitHubRepository repository in _repositories)
@@ -281,6 +299,7 @@ namespace Tauntastic.Packages.Editor
                     Reference = reference,
                     IsInstalled = false,
                     IsPrivateRepository = repository.IsPrivate,
+                    IsVisibilityKnown = true,
                 };
                 StartManifestRequest(info, true);
             }
@@ -348,6 +367,10 @@ namespace Tauntastic.Packages.Editor
                 ProjectPackageFolder folder = FindProjectFolder(manifest.Name, info.Reference.Repository);
                 info.SourceFolderPath = folder != null ? folder.Path : null;
                 info.SourceFolderVersion = folder != null ? folder.Version : string.Empty;
+                info.SourceFolderAbsolutePath = folder != null ? ToAbsolutePath(folder.Path) : null;
+
+                // The source code is ahead when its version is higher than the version in the repository: that counts as an update for the repository.
+                info.SourceAhead = folder != null && PackageVersion.IsNewer(folder.Version, manifest.Version);
                 info.Status = folder != null ? PackageUpdateStatus.SourceFolder : PackageUpdateStatus.Installable;
                 AddResult(info);
                 return;
@@ -540,7 +563,7 @@ namespace Tauntastic.Packages.Editor
                 case 403:
                     kind = PackageFailureKind.TokenRejected;
                     return hasToken
-                        ? "GitHub rejected the token (expired, revoked, without access, or the API rate limit was hit). Check it in Preferences > Tools > Tauntastic > Packages."
+                        ? "GitHub rejected the token (expired, revoked, without access, or the API rate limit was hit). Check it in Preferences > Tools > Tauntastic > Packages (use Test token). " + GitHubTokenTester.Describe(PackageUpdateSettings.GitHubToken)
                         : "GitHub refused the request (possibly the unauthenticated API rate limit of 60 requests per hour). Add a GitHub token in Preferences > Tools > Tauntastic > Packages.";
                 default:
                     kind = request.result == UnityWebRequest.Result.ConnectionError
@@ -550,8 +573,15 @@ namespace Tauntastic.Packages.Editor
             }
         }
 
+        private static string ToAbsolutePath(string projectRelativePath)
+        {
+            string root = System.IO.Directory.GetParent(Application.dataPath).FullName;
+            return System.IO.Path.GetFullPath(System.IO.Path.Combine(root, projectRelativePath));
+        }
+
         private static void FinishCheck()
         {
+            RefreshGitStates();
             PackageUpdateSettings.LastCheckUtc = DateTime.UtcNow;
             RebuildGraph();
             RaiseChanged();
@@ -651,6 +681,321 @@ namespace Tauntastic.Packages.Editor
                 RaiseChanged();
             };
             EditorApplication.update += wait;
+        }
+
+        // ---------------------------------------------------------------------------------------------------------------------
+        // Source code packages: git state, commit and push
+        // ---------------------------------------------------------------------------------------------------------------------
+
+        /// <summary>What to do with the git repositories of source code packages.</summary>
+        public enum GitAction
+        {
+            Commit,
+            Push,
+            CommitAndPush,
+        }
+
+        private static readonly System.Collections.Concurrent.ConcurrentQueue<Action> _mainThreadQueue =
+            new System.Collections.Concurrent.ConcurrentQueue<Action>();
+        private static int _activeJobs;
+        private static bool _pumping;
+
+        /// <summary>True while a commit or push of source code packages is running.</summary>
+        public static bool IsGitBusy { get; private set; }
+
+        /// <summary>Runs work on a background thread (git blocks) and then the callback on the main thread.</summary>
+        private static void StartJob(Action background, Action onMainThread)
+        {
+            System.Threading.Interlocked.Increment(ref _activeJobs);
+            EnsurePump();
+
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                Exception failure = null;
+                try
+                {
+                    background();
+                }
+                catch (Exception exception)
+                {
+                    failure = exception;
+                }
+
+                _mainThreadQueue.Enqueue(() =>
+                {
+                    System.Threading.Interlocked.Decrement(ref _activeJobs);
+                    if (failure != null)
+                        Debug.LogError("[Tauntastic.Packages] Git operation failed: " + failure.Message);
+                    else
+                        onMainThread();
+                });
+            });
+        }
+
+        private static void EnsurePump()
+        {
+            if (_pumping)
+                return;
+
+            _pumping = true;
+            EditorApplication.update += Pump;
+        }
+
+        private static void Pump()
+        {
+            Action action;
+            while (_mainThreadQueue.TryDequeue(out action))
+                action();
+
+            if (System.Threading.Volatile.Read(ref _activeJobs) == 0 && _mainThreadQueue.IsEmpty)
+            {
+                EditorApplication.update -= Pump;
+                _pumping = false;
+            }
+        }
+
+        /// <summary>Reads the git state (uncommitted changes, unpushed commits) of every source code package in the background.</summary>
+        public static void RefreshGitStates()
+        {
+            foreach (PackageUpdateInfo info in _results)
+            {
+                if (info.Status != PackageUpdateStatus.SourceFolder || string.IsNullOrEmpty(info.SourceFolderAbsolutePath))
+                    continue;
+
+                PackageUpdateInfo target = info;
+                string folder = info.SourceFolderAbsolutePath;
+                GitState state = null;
+
+                StartJob(
+                    () => { state = GitRepository.Inspect(folder); },
+                    () =>
+                    {
+                        target.Git = state;
+                        RaiseChanged();
+                    });
+            }
+        }
+
+        /// <summary>The source code packages that the action would do something for, ordered from the top of the dependency tree to the bottom.</summary>
+        public static List<PackageUpdateInfo> GetEligibleSourcePackages(GitAction action)
+        {
+            var byName = new Dictionary<string, PackageUpdateInfo>(StringComparer.OrdinalIgnoreCase);
+            foreach (PackageUpdateInfo info in _results)
+            {
+                if (info.Status != PackageUpdateStatus.SourceFolder || info.IsGitBusy || info.Git == null)
+                    continue;
+
+                if (IsEligible(info.Git, action) && !byName.ContainsKey(info.Name))
+                    byName.Add(info.Name, info);
+            }
+
+            var ordered = new List<PackageUpdateInfo>();
+            foreach (string name in _graph.GetInstallOrder(byName.Keys))
+                ordered.Add(byName[name]);
+            return ordered;
+        }
+
+        /// <summary>True when the action would do something for a repository in this state.</summary>
+        public static bool IsEligible(GitState state, GitAction action)
+        {
+            if (state == null)
+                return false;
+
+            switch (action)
+            {
+                case GitAction.Commit: return state.CanCommit;
+                case GitAction.Push: return state.CanPush;
+                default: return state.CanCommitAndPush;
+            }
+        }
+
+        /// <summary>
+        /// Commits (message = the version in the package.json) and/or pushes the given source code packages, one after the other, in the
+        /// order given. A package is only touched when it is eligible at that moment, so this is safe to call on a stale list.
+        /// </summary>
+        public static void RunGit(GitAction action, List<PackageUpdateInfo> targets)
+        {
+            if (IsGitBusy || targets == null || targets.Count == 0)
+                return;
+
+            var work = new List<PackageUpdateInfo>(targets);
+            foreach (PackageUpdateInfo info in work)
+                info.IsGitBusy = true;
+            IsGitBusy = true;
+            RaiseChanged();
+
+            bool doCommit = action != GitAction.Push;
+            bool doPush = action != GitAction.Commit;
+            var outcomes = new List<string>();
+            var failures = new List<string>();
+            var pushedVersions = new Dictionary<PackageUpdateInfo, string>();
+
+            StartJob(
+                () =>
+                {
+                    foreach (PackageUpdateInfo info in work)
+                    {
+                        string folder = info.SourceFolderAbsolutePath;
+                        string version = ReadVersion(folder, info.SourceFolderVersion);
+                        string name = info.DisplayName;
+
+                        if (doCommit)
+                        {
+                            GitState before = GitRepository.Inspect(folder);
+                            if (before.CanCommit)
+                            {
+                                GitResult commit = GitRepository.Commit(folder, version);
+                                if (commit.Success)
+                                    outcomes.Add(name + ": committed \"" + version + "\".");
+                                else
+                                {
+                                    failures.Add(name + ": commit failed: " + commit.Message);
+                                    continue;
+                                }
+                            }
+                        }
+
+                        if (doPush)
+                        {
+                            GitState before = GitRepository.Inspect(folder);
+                            if (before.CanPush)
+                            {
+                                GitResult push = GitRepository.Push(folder);
+                                if (push.Success)
+                                {
+                                    outcomes.Add(name + ": pushed.");
+                                    pushedVersions[info] = version;
+                                }
+                                else
+                                    failures.Add(name + ": push failed: " + push.Message);
+                            }
+                        }
+                    }
+                },
+                () =>
+                {
+                    foreach (PackageUpdateInfo info in work)
+                    {
+                        info.IsGitBusy = false;
+
+                        string pushed;
+                        if (pushedVersions.TryGetValue(info, out pushed) && !string.IsNullOrEmpty(pushed))
+                        {
+                            // GitHub's raw files are cached for a few minutes, so do not wait for the next scan to show the new version.
+                            info.LatestVersion = pushed;
+                            info.SourceAhead = false;
+                        }
+                    }
+
+                    IsGitBusy = false;
+
+                    foreach (string line in outcomes)
+                        Debug.Log("[Tauntastic.Packages] " + line);
+                    foreach (string line in failures)
+                        Debug.LogError("[Tauntastic.Packages] " + line);
+                    if (outcomes.Count == 0 && failures.Count == 0)
+                        Debug.Log("[Tauntastic.Packages] Nothing to commit or push.");
+
+                    RefreshGitStates();
+                    RaiseChanged();
+                });
+        }
+
+        /// <summary>The version written in the package.json of a folder, or the fallback.</summary>
+        private static string ReadVersion(string folder, string fallback)
+        {
+            try
+            {
+                object root;
+                string file = System.IO.Path.Combine(folder, "package.json");
+                if (System.IO.File.Exists(file) && SimpleJson.TryParse(System.IO.File.ReadAllText(file), out root))
+                {
+                    string version = SimpleJson.GetString(root as Dictionary<string, object>, "version");
+                    if (!string.IsNullOrEmpty(version))
+                        return version;
+                }
+            }
+            catch (System.IO.IOException)
+            {
+            }
+
+            return string.IsNullOrEmpty(fallback) ? "update" : fallback;
+        }
+
+        /// <summary>True while an "update all" operation is running.</summary>
+        public static bool IsUpdatingAll { get; private set; }
+
+        /// <summary>
+        /// Every package that can be updated (UpdateAvailable) or installed (Installable), ordered from the top of the dependency tree
+        /// to the bottom: grandparents first, then parents, then grandchildren. Source folders, failed and up-to-date packages are left out.
+        /// </summary>
+        public static List<PackageUpdateInfo> GetPendingInTreeOrder(bool includeUpdates = true, bool includeInstalls = true)
+        {
+            var byName = new Dictionary<string, PackageUpdateInfo>(StringComparer.OrdinalIgnoreCase);
+            foreach (PackageUpdateInfo info in _results)
+            {
+                bool pending = (includeUpdates && info.Status == PackageUpdateStatus.UpdateAvailable) || (includeInstalls && info.Status == PackageUpdateStatus.Installable);
+                if (pending && !info.IsUpdating && !byName.ContainsKey(info.Name))
+                    byName.Add(info.Name, info);
+            }
+
+            var ordered = new List<PackageUpdateInfo>();
+            foreach (string name in _graph.GetInstallOrder(byName.Keys))
+                ordered.Add(byName[name]);
+            return ordered;
+        }
+
+        /// <summary>
+        /// Updates and installs every pending package in one Package Manager operation, in the order of <see cref="GetPendingInTreeOrder"/>
+        /// (grandparents to grandchildren). One operation means Unity resolves everything together and reloads scripts only once.
+        /// </summary>
+        public static void UpdateAll(bool includeUpdates = true, bool includeInstalls = true)
+        {
+            if (IsUpdatingAll || IsChecking)
+                return;
+
+            List<PackageUpdateInfo> pending = GetPendingInTreeOrder(includeUpdates, includeInstalls);
+            if (pending.Count == 0)
+                return;
+
+            var urls = new string[pending.Count];
+            for (int i = 0; i < pending.Count; i++)
+            {
+                urls[i] = pending[i].Reference.UpdateUrl;
+                pending[i].IsUpdating = true;
+            }
+
+            IsUpdatingAll = true;
+            AddAndRemoveRequest request = Client.AddAndRemove(urls);
+            RaiseChanged();
+
+            EditorApplication.CallbackFunction wait = null;
+            wait = () =>
+            {
+                if (!request.IsCompleted)
+                    return;
+
+                EditorApplication.update -= wait;
+                IsUpdatingAll = false;
+                foreach (PackageUpdateInfo info in pending)
+                    info.IsUpdating = false;
+
+                if (request.Status == StatusCode.Success)
+                    Debug.Log("[Tauntastic.Packages] Updated or installed " + pending.Count + " packages: " + string.Join(", ", ToNames(pending)) + ".");
+                else
+                    Debug.LogError("[Tauntastic.Packages] Update all failed, nothing was changed: " + request.Error.message);
+
+                RaiseChanged();
+            };
+            EditorApplication.update += wait;
+        }
+
+        private static List<string> ToNames(List<PackageUpdateInfo> infos)
+        {
+            var names = new List<string>();
+            foreach (PackageUpdateInfo info in infos)
+                names.Add(info.DisplayName);
+            return names;
         }
 
         private static void RaiseChanged()

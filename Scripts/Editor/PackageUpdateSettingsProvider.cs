@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEditor;
+using UnityEngine;
 
 namespace Tauntastic.Packages.Editor
 {
@@ -45,14 +46,29 @@ namespace Tauntastic.Packages.Editor
                     EditorGUILayout.LabelField("Private repositories", EditorStyles.boldLabel);
                     PackageUpdateSettings.GitHubToken =
                         EditorGUILayout.PasswordField("GitHub token (optional)", PackageUpdateSettings.GitHubToken);
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        using (new EditorGUI.DisabledScope(GitHubTokenTester.IsRunning))
+                        {
+                            if (GUILayout.Button(GitHubTokenTester.IsRunning ? "Testing..." : "Test token", GUILayout.Width(120f)))
+                                GitHubTokenTester.Test();
+                            if (GUILayout.Button(new GUIContent("Test clipboard", "Tests the text on the clipboard without saving it and says whether it is identical to the saved token."), GUILayout.Width(120f)))
+                                GitHubTokenTester.TestClipboard();
+                        }
+                        GUILayout.Label(GitHubTokenTester.Describe(PackageUpdateSettings.GitHubToken), EditorStyles.miniLabel);
+                    }
+
+                    if (!string.IsNullOrEmpty(GitHubTokenTester.Result))
+                        EditorGUILayout.HelpBox(GitHubTokenTester.Result, GitHubTokenTester.LastTestAccepted ? MessageType.Info : MessageType.Warning);
+
                     EditorGUILayout.HelpBox(
                         "Only needed to check packages in private GitHub repositories. Create a fine-grained personal access token with " +
                         "read-only \"Contents\" access to those repositories. It is stored in plain text in this machine's EditorPrefs " +
-                        "(never in the project) and is only sent to raw.githubusercontent.com.",
+                        "(never in the project) and is only sent to GitHub (api.github.com).",
                         MessageType.Info);
 
                     EditorGUILayout.Space();
-                    if (UnityEngine.GUILayout.Button("Open Updates window", UnityEngine.GUILayout.Width(180f)))
+                    if (GUILayout.Button("Open Updates window", GUILayout.Width(180f)))
                         PackageUpdateWindow.Open();
                 },
             };

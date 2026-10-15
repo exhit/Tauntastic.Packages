@@ -58,6 +58,68 @@ namespace Tauntastic.Packages.Editor
             return Walk(_parents, package);
         }
 
+        /// <summary>
+        /// Orders packages from the top of the dependency tree to the bottom: a package always comes before the packages it depends on
+        /// (grandparents first, then parents, then grandchildren). Packages on the same level are sorted by name. Packages that depend on
+        /// each other in a cycle are put together at the end of the order they are found in.
+        /// </summary>
+        public List<string> GetInstallOrder(IEnumerable<string> packages)
+        {
+            var remaining = new List<string>();
+            if (packages != null)
+            {
+                foreach (string package in packages)
+                {
+                    if (!string.IsNullOrEmpty(package) && !Contains(remaining, package))
+                        remaining.Add(package);
+                }
+            }
+
+            // For every package: which of the other given packages depend on it (directly or through packages that are not in the list).
+            var dependents = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (string package in remaining)
+            {
+                var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (DependencyEntry entry in GetDependents(package))
+                {
+                    if (Contains(remaining, entry.Name))
+                        set.Add(entry.Name);
+                }
+                dependents[package] = set;
+            }
+
+            var ordered = new List<string>();
+            while (remaining.Count > 0)
+            {
+                var level = new List<string>();
+                foreach (string package in remaining)
+                {
+                    bool blocked = false;
+                    foreach (string dependent in dependents[package])
+                    {
+                        if (Contains(remaining, dependent))
+                        {
+                            blocked = true;
+                            break;
+                        }
+                    }
+
+                    if (!blocked)
+                        level.Add(package);
+                }
+
+                // Only a dependency cycle leaves nothing free: take everything that is left.
+                if (level.Count == 0)
+                    level.AddRange(remaining);
+
+                level.Sort(StringComparer.OrdinalIgnoreCase);
+                ordered.AddRange(level);
+                remaining.RemoveAll(p => Contains(level, p));
+            }
+
+            return ordered;
+        }
+
         private static List<DependencyEntry> Walk(Dictionary<string, List<string>> edges, string start)
         {
             var result = new List<DependencyEntry>();

@@ -36,3 +36,12 @@
 - The Updates window scans by itself when it opens with no results, limited by the "Hours between checks" preference (the last scan must be older than the interval)
 - The default interval between automatic scans is now 2 hours (was 24); an interval you saved in the preferences is kept
 - Clearer message in the empty window explaining when the next automatic scan happens
+
+## 1.6.0
+
+- Update all and Install all buttons in the Updates window: after a confirmation list they update (installed packages with a newer version) or install (installable packages) in one Package Manager operation, ordered from the top of the dependency tree (grandparents) to the bottom (grandchildren); a button only appears when it has something to do and source code packages never count
+- Source code packages (the folder already exists in the project) are recognised as an update when their version is higher than the version in the repository (SOURCE AHEAD: UPDATE flag, counted in the summary strip and the tab title)
+- Git for source code packages: a Git dropdown on each source code row (Commit if eligible, Push if eligible, Commit & Push if eligible) and a Source code dropdown in the toolbar (Commit all, Push all, Commit & Push all, shown only while something is eligible, with a confirmation list). The commit message is the version in the package.json; git runs in the background and its state (uncommitted changes, commits not pushed) is shown on each row
+- Preferences: Test token button (asks GitHub whether the saved token is accepted, its rate limit and expiry, and describes the saved token without revealing it) and Test clipboard button (tests the clipboard text without saving it and compares it with the saved token); TOKEN REJECTED errors include the same token description
+- Rows get a PUBLIC flag next to the PRIVATE one, for every package whose repository is in the owner's repository list (installed packages too)
+- Every package row is a foldout that collapses to a single line (name, versions and flags); Expand all and Collapse all buttons in the toolbar. The collapsed state is kept when scripts reload

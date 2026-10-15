@@ -9,6 +9,8 @@ namespace Tauntastic.Packages.Editor
         public static readonly Color UpToDate = new Color(0.20f, 0.55f, 0.30f);
         public static readonly Color UpdateAvailable = new Color(0.90f, 0.55f, 0.10f);
         public static readonly Color Installable = new Color(0.10f, 0.58f, 0.65f);
+        public static readonly Color PrivateRepository = new Color(0.35f, 0.35f, 0.35f);
+        public static readonly Color PublicRepository = new Color(0.17f, 0.60f, 0.45f);
         public static readonly Color SourceFolder = new Color(0.38f, 0.40f, 0.82f);
         public static readonly Color NotFoundOrPrivate = new Color(0.75f, 0.22f, 0.22f);
         public static readonly Color TokenRejected = new Color(0.60f, 0.28f, 0.70f);
