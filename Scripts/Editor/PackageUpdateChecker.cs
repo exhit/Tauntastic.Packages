@@ -103,12 +103,20 @@ namespace Tauntastic.Packages.Editor
                 };
                 _results.Add(info);
 
-                UnityWebRequest request = UnityWebRequest.Get(reference.RawPackageJsonUrl);
+                string token = PackageUpdateSettings.GitHubToken;
+                bool hasToken = !string.IsNullOrEmpty(token);
+
+                // With a token use the GitHub API (clear error messages, official fine-grained token support);
+                // without one use the plain raw file URL, which needs no login for public repositories.
+                UnityWebRequest request = UnityWebRequest.Get(hasToken ? reference.ApiPackageJsonUrl : reference.RawPackageJsonUrl);
                 request.timeout = _TIMEOUT_SECONDS;
 
-                string token = PackageUpdateSettings.GitHubToken;
-                if (!string.IsNullOrEmpty(token))
-                    request.SetRequestHeader("Authorization", "token " + token);
+                if (hasToken)
+                {
+                    request.SetRequestHeader("Authorization", "Bearer " + token);
+                    request.SetRequestHeader("Accept", "application/vnd.github.raw+json");
+                    request.SetRequestHeader("X-GitHub-Api-Version", "2022-11-28");
+                }
                 request.SendWebRequest();
                 _pending.Add(new PendingRequest { Info = info, Request = request });
             }
@@ -197,7 +205,38 @@ namespace Tauntastic.Packages.Editor
                 : PackageUpdateStatus.UpToDate;
         }
 
+        [Serializable]
+        private class GitHubError
+        {
+            public string message;
+        }
+
+        /// <summary>The "message" GitHub puts in its error responses (for example "Bad credentials" or "Not Found"), or an empty string.</summary>
+        private static string GitHubMessage(UnityWebRequest request)
+        {
+            try
+            {
+                string body = request.downloadHandler != null ? request.downloadHandler.text : null;
+                if (string.IsNullOrEmpty(body))
+                    return string.Empty;
+
+                GitHubError error = JsonUtility.FromJson<GitHubError>(body);
+                return error != null && !string.IsNullOrEmpty(error.message) ? error.message : string.Empty;
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
+        }
+
         private static string DescribeFailure(UnityWebRequest request, out PackageFailureKind kind)
+        {
+            string text = DescribeFailureCore(request, out kind);
+            string gitHub = GitHubMessage(request);
+            return string.IsNullOrEmpty(gitHub) ? text : text + " GitHub says: \"" + gitHub + "\" (HTTP " + request.responseCode + ").";
+        }
+
+        private static string DescribeFailureCore(UnityWebRequest request, out PackageFailureKind kind)
         {
             bool hasToken = !string.IsNullOrEmpty(PackageUpdateSettings.GitHubToken);
 
@@ -206,7 +245,7 @@ namespace Tauntastic.Packages.Editor
                 case 404:
                     kind = PackageFailureKind.NotFoundOrPrivate;
                     return hasToken
-                        ? "Not found. The repository or its package.json does not exist, or the GitHub token has no read access to it (needs Contents: Read)."
+                        ? "Not found. The repository or its package.json does not exist, or the GitHub token cannot see it. A fine-grained token must have the repository owner as resource owner, list this repository and have Contents: Read (organisations may need to approve the token)."
                         : "Not found. The repository does not exist or is private. For a private repository add a GitHub token in Preferences > Tools > Tauntastic > Packages.";
                 case 401:
                 case 403:

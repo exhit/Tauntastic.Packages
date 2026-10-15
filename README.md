@@ -2,7 +2,7 @@
 
 Tells you when a newer version of an installed Tauntastic package is available. Unity's Package Manager does not notify you about updates of packages installed from a git URL; this package fills that gap with a version checker, an Updates window and one-click updates.
 
-- Package: `com.tauntastic.packages` (v1.2.0, Unity 2023.2+)
+- Package: `com.tauntastic.packages` (v1.3.0, Unity 2023.2+)
 - Assembly / namespace: `Tauntastic.Packages.Editor` (Editor-only)
 - Dependencies: none
 - AI agents: see [ARTIFICIAL_INTELLIGENCE_README.md](ARTIFICIAL_INTELLIGENCE_README.md)
@@ -55,7 +55,7 @@ Each package row has a colored flag, a tinted background and a colored edge. A s
 
 - Only GitHub HTTPS git URLs are supported. Packages from a registry are already handled by the Package Manager, and packages inside `Assets/` or `Packages/` folders have no remote to check.
 - A package can only be reported if its `package.json` version is raised when you release. Bump the version (and write the `CHANGELOG.md` entry) before pushing.
-- A private GitHub repository can only be checked with a token: create a fine-grained personal access token with read-only **Contents** access to those repositories and paste it into **Preferences > Tools > Tauntastic > Packages > GitHub token**. It is stored in plain text in this machine's EditorPrefs (never in the project) and only sent to `raw.githubusercontent.com`. Without it, a private repository shows "Not found. The repository does not exist or is private" in the window.
+- A private GitHub repository can only be checked with a token: create a fine-grained personal access token with read-only **Contents** access to those repositories and paste it into **Preferences > Tools > Tauntastic > Packages > GitHub token**. When a token is set, checks go through the GitHub API (`api.github.com`) so errors are explicit; the window then appends what GitHub says (for example "Bad credentials" or "Not Found"). The token is stored in plain text in this machine's EditorPrefs (never in the project) and is only sent to GitHub. A fine-grained token must use the repository owner as **resource owner**, list the repositories, and have **Contents: Read-only** (organisations may need to approve it); a classic token needs the `repo` scope. Without it, a private repository shows "Not found. The repository does not exist or is private" in the window.
 
 ## API
 

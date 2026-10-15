@@ -17,3 +17,8 @@
 
 - Updates window: colored status flags, tinted row backgrounds and a summary strip for every status and every kind of failure (not found / private, token rejected, network error, invalid response)
 - The number of available updates is shown in the window tab title
+
+## 1.3.0
+
+- With a GitHub token the check now uses the GitHub API (Bearer authorization) instead of the raw file URL, and failure messages include what GitHub answered (for example "Bad credentials")
+- Clearer guidance for fine-grained tokens (resource owner, repository list, Contents: Read)

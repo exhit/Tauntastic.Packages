@@ -41,6 +41,19 @@ namespace Tauntastic.Packages.Editor
             }
         }
 
+        /// <summary>URL of the GitHub API endpoint that returns the package.json of the followed branch; used when a token is set because the API reports clear errors and officially supports fine-grained tokens.</summary>
+        public string ApiPackageJsonUrl
+        {
+            get
+            {
+                string folder = string.IsNullOrEmpty(Path) ? string.Empty : Path.Trim('/') + "/";
+                string url = "https://api.github.com/repos/" + Owner + "/" + Repository + "/contents/" + folder + "package.json";
+                if (!string.IsNullOrEmpty(Branch))
+                    url += "?ref=" + Branch;
+                return url;
+            }
+        }
+
         /// <summary>Git URL to hand to the Package Manager to update: follows the branch, never a pinned commit or tag.</summary>
         public string UpdateUrl
         {
