@@ -2,7 +2,7 @@
 
 Tells you when a newer version of an installed Tauntastic package is available. Unity's Package Manager does not notify you about updates of packages installed from a git URL; this package fills that gap with a version checker, an Updates window and one-click updates.
 
-- Package: `com.tauntastic.packages` (v1.0.0, Unity 2023.2+)
+- Package: `com.tauntastic.packages` (v1.1.0, Unity 2023.2+)
 - Assembly / namespace: `Tauntastic.Packages.Editor` (Editor-only)
 - Dependencies: none
 - AI agents: see [ARTIFICIAL_INTELLIGENCE_README.md](ARTIFICIAL_INTELLIGENCE_README.md)
@@ -16,7 +16,7 @@ https://github.com/exhit/Tauntastic.Packages.git
 ## How it works
 
 1. It lists the installed packages whose name starts with `com.tauntastic.` and that were installed from a **GitHub git URL**.
-2. For each one it downloads `package.json` from the head of the package's branch on `raw.githubusercontent.com` (no login or API key; the repository must be public).
+2. For each one it downloads `package.json` from the head of the package's branch on `raw.githubusercontent.com` (public repositories need no login; private ones need the optional GitHub token below).
 3. It compares the `version` there with the installed version (`major.minor.patch`, optional `-preview` tag). A higher remote version means an update is available.
 4. If updates are found it logs a warning per package (with the changelog link) and opens the Updates window. The same set of updates is announced only once.
 
@@ -41,7 +41,7 @@ Which branch is followed:
 
 - Only GitHub HTTPS git URLs are supported. Packages from a registry are already handled by the Package Manager, and packages inside `Assets/` or `Packages/` folders have no remote to check.
 - A package can only be reported if its `package.json` version is raised when you release. Bump the version (and write the `CHANGELOG.md` entry) before pushing.
-- A private GitHub repository cannot be checked because no credentials are sent; the window shows the error for that package.
+- A private GitHub repository can only be checked with a token: create a fine-grained personal access token with read-only **Contents** access to those repositories and paste it into **Preferences > Tools > Tauntastic > Packages > GitHub token**. It is stored in plain text in this machine's EditorPrefs (never in the project) and only sent to `raw.githubusercontent.com`. Without it, a private repository shows "Not found. The repository does not exist or is private" in the window.
 
 ## API
 

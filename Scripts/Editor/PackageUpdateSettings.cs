@@ -14,6 +14,7 @@ namespace Tauntastic.Packages.Editor
         private const string _OPEN_WINDOW = _PREFIX + "OpenWindowOnUpdate";
         private const string _LAST_CHECK = _PREFIX + "LastCheckUtcTicks";
         private const string _LAST_NOTIFIED = _PREFIX + "LastNotified";
+        private const string _GITHUB_TOKEN = _PREFIX + "GitHubToken";
 
         /// <summary>Whether the checker runs automatically when the Editor starts.</summary>
         public static bool Enabled
@@ -47,6 +48,16 @@ namespace Tauntastic.Packages.Editor
                 return DateTime.MinValue;
             }
             set { EditorPrefs.SetString(_LAST_CHECK, value.Ticks.ToString()); }
+        }
+
+        /// <summary>
+        /// Optional GitHub personal access token with read access to repository contents, used to check private repositories.
+        /// Stored in plain text in this machine's EditorPrefs and only ever sent to raw.githubusercontent.com.
+        /// </summary>
+        public static string GitHubToken
+        {
+            get { return EditorPrefs.GetString(_GITHUB_TOKEN, string.Empty); }
+            set { EditorPrefs.SetString(_GITHUB_TOKEN, (value ?? string.Empty).Trim()); }
         }
 
         /// <summary>Signature of the set of updates the user was last told about, so the same updates are announced only once.</summary>

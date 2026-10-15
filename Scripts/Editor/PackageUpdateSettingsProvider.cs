@@ -28,6 +28,16 @@ namespace Tauntastic.Packages.Editor
                     }
 
                     EditorGUILayout.Space();
+                    EditorGUILayout.LabelField("Private repositories", EditorStyles.boldLabel);
+                    PackageUpdateSettings.GitHubToken =
+                        EditorGUILayout.PasswordField("GitHub token (optional)", PackageUpdateSettings.GitHubToken);
+                    EditorGUILayout.HelpBox(
+                        "Only needed to check packages in private GitHub repositories. Create a fine-grained personal access token with " +
+                        "read-only \"Contents\" access to those repositories. It is stored in plain text in this machine's EditorPrefs " +
+                        "(never in the project) and is only sent to raw.githubusercontent.com.",
+                        MessageType.Info);
+
+                    EditorGUILayout.Space();
                     if (UnityEngine.GUILayout.Button("Open Updates window", UnityEngine.GUILayout.Width(180f)))
                         PackageUpdateWindow.Open();
                 },

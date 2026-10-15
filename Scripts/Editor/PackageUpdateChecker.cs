@@ -105,6 +105,10 @@ namespace Tauntastic.Packages.Editor
 
                 UnityWebRequest request = UnityWebRequest.Get(reference.RawPackageJsonUrl);
                 request.timeout = _TIMEOUT_SECONDS;
+
+                string token = PackageUpdateSettings.GitHubToken;
+                if (!string.IsNullOrEmpty(token))
+                    request.SetRequestHeader("Authorization", "token " + token);
                 request.SendWebRequest();
                 _pending.Add(new PendingRequest { Info = info, Request = request });
             }
@@ -159,7 +163,7 @@ namespace Tauntastic.Packages.Editor
             if (pending.Request.result != UnityWebRequest.Result.Success)
             {
                 info.Status = PackageUpdateStatus.Failed;
-                info.Error = pending.Request.error;
+                info.Error = DescribeFailure(pending.Request);
                 return;
             }
 
@@ -187,6 +191,26 @@ namespace Tauntastic.Packages.Editor
             info.Status = PackageVersion.IsNewer(remote.version, info.InstalledVersion)
                 ? PackageUpdateStatus.UpdateAvailable
                 : PackageUpdateStatus.UpToDate;
+        }
+
+        private static string DescribeFailure(UnityWebRequest request)
+        {
+            bool hasToken = !string.IsNullOrEmpty(PackageUpdateSettings.GitHubToken);
+
+            switch (request.responseCode)
+            {
+                case 404:
+                    return hasToken
+                        ? "Not found. The repository or its package.json does not exist, or the GitHub token has no read access to it (needs Contents: Read)."
+                        : "Not found. The repository does not exist or is private. For a private repository add a GitHub token in Preferences > Tools > Tauntastic > Packages.";
+                case 401:
+                case 403:
+                    return hasToken
+                        ? "GitHub rejected the token (expired, revoked or without access). Check it in Preferences > Tools > Tauntastic > Packages."
+                        : "GitHub refused the request. Add a GitHub token in Preferences > Tools > Tauntastic > Packages.";
+                default:
+                    return request.error;
+            }
         }
 
         private static void FinishCheck()
