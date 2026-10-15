@@ -163,7 +163,9 @@ namespace Tauntastic.Packages.Editor
             if (pending.Request.result != UnityWebRequest.Result.Success)
             {
                 info.Status = PackageUpdateStatus.Failed;
-                info.Error = DescribeFailure(pending.Request);
+                PackageFailureKind kind;
+                info.Error = DescribeFailure(pending.Request, out kind);
+                info.FailureKind = kind;
                 return;
             }
 
@@ -176,6 +178,7 @@ namespace Tauntastic.Packages.Editor
             {
                 info.Status = PackageUpdateStatus.Failed;
                 info.Error = exception.Message;
+                info.FailureKind = PackageFailureKind.InvalidResponse;
                 return;
             }
 
@@ -184,6 +187,7 @@ namespace Tauntastic.Packages.Editor
             {
                 info.Status = PackageUpdateStatus.Failed;
                 info.Error = "The remote package.json has no valid version.";
+                info.FailureKind = PackageFailureKind.InvalidResponse;
                 return;
             }
 
@@ -193,22 +197,27 @@ namespace Tauntastic.Packages.Editor
                 : PackageUpdateStatus.UpToDate;
         }
 
-        private static string DescribeFailure(UnityWebRequest request)
+        private static string DescribeFailure(UnityWebRequest request, out PackageFailureKind kind)
         {
             bool hasToken = !string.IsNullOrEmpty(PackageUpdateSettings.GitHubToken);
 
             switch (request.responseCode)
             {
                 case 404:
+                    kind = PackageFailureKind.NotFoundOrPrivate;
                     return hasToken
                         ? "Not found. The repository or its package.json does not exist, or the GitHub token has no read access to it (needs Contents: Read)."
                         : "Not found. The repository does not exist or is private. For a private repository add a GitHub token in Preferences > Tools > Tauntastic > Packages.";
                 case 401:
                 case 403:
+                    kind = PackageFailureKind.TokenRejected;
                     return hasToken
                         ? "GitHub rejected the token (expired, revoked or without access). Check it in Preferences > Tools > Tauntastic > Packages."
                         : "GitHub refused the request. Add a GitHub token in Preferences > Tools > Tauntastic > Packages.";
                 default:
+                    kind = request.result == UnityWebRequest.Result.ConnectionError
+                        ? PackageFailureKind.Network
+                        : PackageFailureKind.InvalidResponse;
                     return request.error;
             }
         }

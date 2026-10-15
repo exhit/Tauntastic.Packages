@@ -2,7 +2,7 @@
 
 Tells you when a newer version of an installed Tauntastic package is available. Unity's Package Manager does not notify you about updates of packages installed from a git URL; this package fills that gap with a version checker, an Updates window and one-click updates.
 
-- Package: `com.tauntastic.packages` (v1.1.0, Unity 2023.2+)
+- Package: `com.tauntastic.packages` (v1.2.0, Unity 2023.2+)
 - Assembly / namespace: `Tauntastic.Packages.Editor` (Editor-only)
 - Dependencies: none
 - AI agents: see [ARTIFICIAL_INTELLIGENCE_README.md](ARTIFICIAL_INTELLIGENCE_README.md)
@@ -36,6 +36,20 @@ Which branch is followed:
 - **Tools > Tauntastic > Packages > Updates** (always the first entries of the Tauntastic menu) - the Updates window: installed vs. latest version, status, **Update**, **Changelog** and **Repository** buttons, **Check now**.
 - **Tools > Tauntastic > Packages > Check For Updates** - runs a check immediately and always reports the outcome.
 - **Preferences > Tools > Tauntastic > Packages** - switch the automatic check on or off, set the hours between checks and choose whether the window opens by itself.
+
+## Status flags
+
+Each package row has a colored flag, a tinted background and a colored edge. A strip of flags with counts sits under the toolbar, and the tab title shows the number of available updates, for example `Tauntastic Packages (2)`.
+
+| Flag | Color | Meaning |
+|---|---|---|
+| `UP TO DATE` | green | The installed version is the latest. |
+| `UPDATE AVAILABLE` | orange | A newer version is on the branch. |
+| `CHECKING` | gray | The request is still running. |
+| `NOT FOUND / PRIVATE` | red | HTTP 404: the repository or its package.json does not exist, or it is private and no token (or one without access) was sent. |
+| `TOKEN REJECTED` | purple | HTTP 401 or 403: GitHub refused the request or the token. |
+| `NETWORK ERROR` | blue | The request did not complete: offline, timeout or connection problem. |
+| `INVALID RESPONSE` | amber | GitHub answered but the package.json could not be read or has no valid version. |
 
 ## Good to know
 

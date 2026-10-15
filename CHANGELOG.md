@@ -12,3 +12,8 @@
 - Added an optional GitHub token in Preferences to check packages in private repositories
 - Clearer failure messages (repository not found or private, token rejected)
 - Menu entries and the Packages package are always listed first
+
+## 1.2.0
+
+- Updates window: colored status flags, tinted row backgrounds and a summary strip for every status and every kind of failure (not found / private, token rejected, network error, invalid response)
+- The number of available updates is shown in the window tab title
