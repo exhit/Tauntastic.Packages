@@ -20,7 +20,6 @@ namespace Tauntastic.Packages.Editor
     public static class PackageUpdateChecker
     {
         private const string _NAME_PREFIX = "com.tauntastic.";
-        private const string _MENU_PATH = "Tools/Tauntastic/Packages/";
         private const int _TIMEOUT_SECONDS = 15;
         private const int _PAGE_SIZE = 100;
         private const int _MAX_PAGES = 10;
@@ -70,31 +69,142 @@ namespace Tauntastic.Packages.Editor
 
         private static void RunAutomaticCheck()
         {
-            if (Application.isBatchMode || !PackageUpdateSettings.IsAutomaticCheckDue())
-                return;
-            if (Application.internetReachability == NetworkReachability.NotReachable)
-                return;
-
-            CheckNow(false);
+            LoadSavedScanOrScan();
         }
 
-        /// <summary>Called when the Updates window opens: scans when there are no results yet, the automatic check is on and the last scan is older than the interval in the preferences.</summary>
+        /// <summary>Called when the Updates window opens: shows the saved scan when it is still fresh, otherwise scans (when the automatic check is on).</summary>
         public static void ScanIfEmptyAndDue()
+        {
+            LoadSavedScanOrScan();
+        }
+
+        /// <summary>
+        /// Fills the results when there are none. The newest saved scan is shown when it is younger than "hours between checks" and the
+        /// installed packages are still the same as in that scan; no network request is made then. Otherwise a new scan is started, if the
+        /// automatic check is on and we are online. With the automatic check off the saved scan is shown whatever its age.
+        /// </summary>
+        private static void LoadSavedScanOrScan()
         {
             if (_results.Count > 0 || IsChecking || Application.isBatchMode)
                 return;
-            if (!PackageUpdateSettings.IsAutomaticCheckDue())
+
+            PackageScanSnapshot snapshot = null;
+            try
+            {
+                snapshot = Store.LoadLatestScan();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("[Tauntastic.Packages] Could not read the saved scan: " + exception.Message);
+            }
+
+            bool usable = snapshot != null && snapshot.MatchesInstalled(GetInstalledGitPackages()) && SourceFoldersExist(snapshot);
+            bool fresh = snapshot != null && snapshot.IsFresh(DateTime.UtcNow, PackageUpdateSettings.IntervalHours);
+
+            if (usable && (fresh || !PackageUpdateSettings.Enabled))
+            {
+                ApplySnapshot(snapshot);
                 return;
+            }
+
+            if (!PackageUpdateSettings.Enabled)
+                return;
+
             if (Application.internetReachability == NetworkReachability.NotReachable)
+            {
+                if (usable)
+                    ApplySnapshot(snapshot);
                 return;
+            }
 
             CheckNow(false);
         }
 
-        [MenuItem(_MENU_PATH + "Check For Updates", false, PackageMenuPriority.CheckForUpdates)]
-        private static void CheckFromMenu()
+        private static PackageScanStore _store;
+
+        /// <summary>The folder (Library/Tauntastic.Packages of this project, not versioned) where every scan and the window state are saved.</summary>
+        public static PackageScanStore Store
         {
-            CheckNow(true);
+            get
+            {
+                if (_store == null)
+                {
+                    string root = System.IO.Directory.GetParent(Application.dataPath).FullName;
+                    _store = new PackageScanStore(System.IO.Path.Combine(root, "Library", "Tauntastic.Packages"));
+                }
+                return _store;
+            }
+        }
+
+        /// <summary>When the scan that is shown finished (UTC), or null when there is no scan.</summary>
+        public static DateTime? ShownScanUtc { get; private set; }
+
+        /// <summary>True when the results shown were loaded from a saved scan instead of a scan made in this session.</summary>
+        public static bool ShownFromSavedScan { get; private set; }
+
+        /// <summary>The installed Tauntastic git packages now: package name to version.</summary>
+        private static Dictionary<string, string> GetInstalledGitPackages()
+        {
+            var installed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (PackageInfo package in PackageInfo.GetAllRegisteredPackages())
+            {
+                GitPackageReference reference;
+                if (package.source == PackageSource.Git &&
+                    package.name.StartsWith(_NAME_PREFIX, StringComparison.OrdinalIgnoreCase) &&
+                    GitPackageReference.TryParse(package.packageId, out reference))
+                    installed[package.name] = package.version;
+            }
+            return installed;
+        }
+
+        private static bool SourceFoldersExist(PackageScanSnapshot snapshot)
+        {
+            foreach (PackageUpdateInfo info in snapshot.Packages)
+            {
+                if (!string.IsNullOrEmpty(info.SourceFolderPath) && !System.IO.Directory.Exists(ToAbsolutePath(info.SourceFolderPath)))
+                    return false;
+            }
+            return true;
+        }
+
+        private static void ApplySnapshot(PackageScanSnapshot snapshot)
+        {
+            _results.Clear();
+            foreach (PackageUpdateInfo info in snapshot.Packages)
+            {
+                if (!string.IsNullOrEmpty(info.SourceFolderPath))
+                    info.SourceFolderAbsolutePath = ToAbsolutePath(info.SourceFolderPath);
+                _results.Add(info);
+            }
+
+            DiscoveryError = string.IsNullOrEmpty(snapshot.DiscoveryError) ? null : snapshot.DiscoveryError;
+            ShownScanUtc = snapshot.SavedUtc;
+            ShownFromSavedScan = true;
+
+            SortResults();
+            RebuildGraph();
+            RefreshGitStates();
+            RaiseChanged();
+        }
+
+        /// <summary>Saves the results as a scan file. With replaceLatest the newest file is corrected instead of adding one (used after a push).</summary>
+        private static void SaveCurrentScan(bool replaceLatest)
+        {
+            try
+            {
+                var snapshot = new PackageScanSnapshot
+                {
+                    SavedUtc = replaceLatest && ShownScanUtc.HasValue ? ShownScanUtc.Value : DateTime.UtcNow,
+                    Owner = PackageUpdateSettings.GitHubOwner,
+                    DiscoveryError = DiscoveryError ?? string.Empty,
+                    Packages = new List<PackageUpdateInfo>(_results),
+                };
+                Store.SaveScan(snapshot, replaceLatest);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("[Tauntastic.Packages] Could not save the scan: " + exception.Message);
+            }
         }
 
         /// <summary>Starts a check of all installed Tauntastic git packages and of the GitHub account. Does nothing when one is already running.</summary>
@@ -584,6 +694,11 @@ namespace Tauntastic.Packages.Editor
             RefreshGitStates();
             PackageUpdateSettings.LastCheckUtc = DateTime.UtcNow;
             RebuildGraph();
+
+            // Every scan is saved, so the window can show it again without scanning (see LoadSavedScanOrScan).
+            ShownScanUtc = DateTime.UtcNow;
+            ShownFromSavedScan = false;
+            SaveCurrentScan(false);
             RaiseChanged();
 
             var signature = new StringBuilder();
@@ -635,7 +750,7 @@ namespace Tauntastic.Packages.Editor
                 {
                     Debug.LogWarning("[Tauntastic.Packages] " + info.DisplayName + " " + info.LatestVersion +
                                      " is available (installed: " + info.InstalledVersion + "). " +
-                                     "Open Tools > Tauntastic > Packages > Updates to update it. " + info.Reference.ChangelogUrl);
+                                     "Open Tools > Tauntastic > Packages to update it. " + info.Reference.ChangelogUrl);
                 }
             }
 
@@ -896,6 +1011,8 @@ namespace Tauntastic.Packages.Editor
                     if (outcomes.Count == 0 && failures.Count == 0)
                         Debug.Log("[Tauntastic.Packages] Nothing to commit or push.");
 
+                    // The pushed versions changed the results: correct the newest saved scan so it does not bring the old versions back.
+                    SaveCurrentScan(true);
                     RefreshGitStates();
                     RaiseChanged();
                 });

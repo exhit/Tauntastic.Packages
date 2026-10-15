@@ -45,3 +45,9 @@
 - Preferences: Test token button (asks GitHub whether the saved token is accepted, its rate limit and expiry, and describes the saved token without revealing it) and Test clipboard button (tests the clipboard text without saving it and compares it with the saved token); TOKEN REJECTED errors include the same token description
 - Rows get a PUBLIC flag next to the PRIVATE one, for every package whose repository is in the owner's repository list (installed packages too)
 - Every package row is a foldout that collapses to a single line (name, versions and flags); Expand all and Collapse all buttons in the toolbar. The collapsed state is kept when scripts reload
+
+## 1.7.0
+
+- Every scan is saved (Library/Tauntastic.Packages, the newest 20 are kept). Opening the window, or starting the Editor, shows the newest saved scan without scanning when it is younger than the hours between checks and the installed packages are unchanged; otherwise a new scan starts. After a push the newest saved scan is corrected
+- The window remembers its choices between sessions: collapsed rows, open Dependencies foldouts, the Show installable toggle and the scroll position
+- The two menu items are replaced by one: Tools > Tauntastic > Packages opens the Updates window; the forced scan is the Check now button in the window

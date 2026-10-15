@@ -2,7 +2,7 @@
 
 Tells you when a newer version of an installed Tauntastic package is available. Unity's Package Manager does not notify you about updates of packages installed from a git URL; this package fills that gap with a version checker, an Updates window and one-click updates.
 
-- Package: `com.tauntastic.packages` (v1.6.0, Unity 2023.2+)
+- Package: `com.tauntastic.packages` (v1.7.0, Unity 2023.2+)
 - Assembly / namespace: `Tauntastic.Packages.Editor` (Editor-only)
 - Dependencies: none
 - AI agents: see [ARTIFICIAL_INTELLIGENCE_README.md](ARTIFICIAL_INTELLIGENCE_README.md)
@@ -33,10 +33,21 @@ Which branch is followed:
 
 ## Using it
 
-- **Tools > Tauntastic > Packages > Updates** (always the first entries of the Tauntastic menu) - the Updates window: installed vs. latest version, status, **Update**, **Changelog** and **Repository** buttons, **Check now**.
+- **Tools > Tauntastic > Packages** (always the first entry of the Tauntastic menu) - the Updates window: installed vs. latest version, status, **Update**, **Changelog** and **Repository** buttons, **Check now**.
 - **Collapsing:** each package row is a foldout: click its header to collapse it to a single line that still shows the name, the versions and the flags. **Expand all** and **Collapse all** in the toolbar do it for every package. The state is kept when scripts reload.
-- **Tools > Tauntastic > Packages > Check For Updates** - runs a check immediately and always reports the outcome.
 - **Preferences > Tools > Tauntastic > Packages** - switch the automatic check on or off, set the hours between checks, choose whether the window opens by itself, list installable packages (and the GitHub owner to search) and set the GitHub token.
+
+## Saved scans and window state
+
+Every scan is saved in `Library/Tauntastic.Packages/` of the project (not versioned): one `scan-<time>.json` per scan, the newest 20 are kept. When the Updates window opens (and when the Editor starts) with no results:
+
+- If the newest saved scan is **younger than "Hours between checks"** (Preferences) and the installed Tauntastic packages are still the same as in that scan (same names and versions) and the source code folders still exist, its results are shown at once. No network request is made, and the toolbar says `Last check: ... (saved scan)`.
+- Otherwise a new scan starts (when the automatic check is on and you are online). A scan is also made when you installed or updated a package since the saved scan, even if it is recent, because its results would be wrong.
+- With the automatic check switched off the newest saved scan is shown whatever its age, and **Check now** makes a new one.
+
+After a push from the Git menu the newest saved scan is corrected, so it does not bring the old versions back.
+
+The window also remembers its choices between sessions (`window-state.json` in the same folder): which package rows are collapsed, which Dependencies foldouts are open, the **Show installable** toggle and the scroll position. The other choices (automatic check, hours between checks, open window on update, discovery, owner, token) are in the Preferences and are saved there.
 
 ## Update all
 

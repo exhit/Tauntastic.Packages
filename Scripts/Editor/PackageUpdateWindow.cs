@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Tauntastic.Packages.Editor
 {
-    /// <summary>Editor window (Tools > Tauntastic > Packages > Updates) that lists the installed Tauntastic git packages and the Tauntastic packages found in the GitHub account that are not installed yet, with a colored status flag per package and per kind of failure, update and install buttons, and a Dependencies foldout.</summary>
+    /// <summary>Editor window (Tools > Tauntastic > Packages) that lists the installed Tauntastic git packages and the Tauntastic packages found in the GitHub account that are not installed yet, with a colored status flag per package and per kind of failure, update and install buttons, and a Dependencies foldout.</summary>
     public class PackageUpdateWindow : EditorWindow
     {
         private const string _TITLE = "Tauntastic Packages";
@@ -15,6 +15,7 @@ namespace Tauntastic.Packages.Editor
         private static GUIStyle _flagStyle;
         private readonly HashSet<string> _dependencyFoldouts = new HashSet<string>();
         private Vector2 _scroll;
+        private string _savedStateSignature = string.Empty;
         private bool _showInstallable = true;
 
         /// <summary>Names of the packages whose row is collapsed to a single line; kept when scripts reload.</summary>
@@ -22,7 +23,7 @@ namespace Tauntastic.Packages.Editor
         private static GUIStyle _foldoutStyle;
 
         /// <summary>Opens the window, or brings it to the front if it is already open.</summary>
-        [MenuItem("Tools/Tauntastic/Packages/Updates", false, PackageMenuPriority.Updates)]
+        [MenuItem("Tools/Tauntastic/Package Manager", false, PackageMenuPriority.Updates)]
         public static void Open()
         {
             var window = GetWindow<PackageUpdateWindow>(_TITLE);
@@ -32,6 +33,8 @@ namespace Tauntastic.Packages.Editor
 
         private void OnEnable()
         {
+            LoadState();
+
             PackageUpdateChecker.Changed += OnResultsChanged;
             UpdateTitle();
 
@@ -41,6 +44,7 @@ namespace Tauntastic.Packages.Editor
 
         private void OnDisable()
         {
+            SaveState(true);
             PackageUpdateChecker.Changed -= OnResultsChanged;
         }
 
@@ -65,8 +69,59 @@ namespace Tauntastic.Packages.Editor
                 titleContent = new GUIContent(title);
         }
 
+        /// <summary>The state the window remembers between sessions, read from the window's fields.</summary>
+        private PackageWindowState CaptureState()
+        {
+            var state = new PackageWindowState
+            {
+                CollapsedPackages = new List<string>(_collapsed),
+                OpenDependencyFoldouts = new List<string>(_dependencyFoldouts),
+                ShowInstallable = _showInstallable,
+                ScrollY = _scroll.y,
+            };
+            state.OpenDependencyFoldouts.Sort(StringComparer.Ordinal);
+            return state;
+        }
+
+        /// <summary>Loads what was saved last time: collapsed rows, open Dependencies foldouts, the Show installable toggle and the scroll position.</summary>
+        private void LoadState()
+        {
+            PackageWindowState state = PackageUpdateChecker.Store.LoadWindowState();
+
+            _collapsed = new List<string>(state.CollapsedPackages);
+            _dependencyFoldouts.Clear();
+            foreach (string name in state.OpenDependencyFoldouts)
+                _dependencyFoldouts.Add(name);
+            _showInstallable = state.ShowInstallable;
+            _scroll = new Vector2(0f, state.ScrollY);
+
+            _savedStateSignature = CaptureState().Signature();
+        }
+
+        /// <summary>Saves the window state when a choice changed since it was last saved (the scroll position alone does not trigger a save; it is saved with the next change and when the window closes).</summary>
+        private void SaveState(bool force)
+        {
+            PackageWindowState state = CaptureState();
+            string signature = state.Signature();
+            if (!force && signature == _savedStateSignature)
+                return;
+
+            try
+            {
+                PackageUpdateChecker.Store.SaveWindowState(state);
+                _savedStateSignature = signature;
+            }
+            catch (System.IO.IOException exception)
+            {
+                Debug.LogWarning("[Tauntastic.Packages] Could not save the window state: " + exception.Message);
+            }
+        }
+
         private void OnGUI()
         {
+            // A choice made during the previous pass (collapse, foldout, toggle) is saved now.
+            SaveState(false);
+
             DrawToolbar();
             DrawSummary();
 
@@ -121,8 +176,10 @@ namespace Tauntastic.Packages.Editor
 
                 GUILayout.FlexibleSpace();
 
-                DateTime last = PackageUpdateSettings.LastCheckUtc;
-                string text = last == DateTime.MinValue ? "Never checked" : "Last check: " + last.ToLocalTime().ToString("g");
+                DateTime? shown = PackageUpdateChecker.ShownScanUtc;
+                string text = shown.HasValue
+                    ? "Last check: " + shown.Value.ToLocalTime().ToString("g") + (PackageUpdateChecker.ShownFromSavedScan ? " (saved scan)" : string.Empty)
+                    : "Never checked";
                 GUILayout.Label(text, EditorStyles.miniLabel);
 
                 if (GUILayout.Button("Preferences", EditorStyles.toolbarButton, GUILayout.Width(80f)))

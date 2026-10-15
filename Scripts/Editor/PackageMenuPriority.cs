@@ -6,6 +6,5 @@ namespace Tauntastic.Packages.Editor
         public const string SelfPackageName = "com.tauntastic.packages";
 
         public const int Updates = -1000;
-        public const int CheckForUpdates = -999;
     }
 }
