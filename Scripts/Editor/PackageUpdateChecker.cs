@@ -12,7 +12,9 @@ namespace Tauntastic.Packages.Editor
 {
     /// <summary>
     /// Finds every Tauntastic package installed from a GitHub git URL, downloads the package.json at the head of its branch and
-    /// compares the version with the installed one. Runs automatically (at most once per interval) and on demand from the menu.
+    /// compares the version with the installed one. It also lists the repositories of the configured GitHub owner whose name starts
+    /// with "Tauntastic." and that hold a Unity package, so packages that are not installed yet show up as installable.
+    /// Runs automatically (at most once per interval) and on demand from the menu.
     /// </summary>
     [InitializeOnLoad]
     public static class PackageUpdateChecker
@@ -20,24 +22,30 @@ namespace Tauntastic.Packages.Editor
         private const string _NAME_PREFIX = "com.tauntastic.";
         private const string _MENU_PATH = "Tools/Tauntastic/Packages/";
         private const int _TIMEOUT_SECONDS = 15;
+        private const int _PAGE_SIZE = 100;
+        private const int _MAX_PAGES = 10;
 
-        [Serializable]
-        private class RemotePackageJson
-        {
-            public string version;
-        }
-
+        /// <summary>A running download of one package.json together with the package it belongs to and whether that package is only a candidate found in the GitHub repository list.</summary>
         private sealed class PendingRequest
         {
             public PackageUpdateInfo Info;
             public UnityWebRequest Request;
+
+            /// <summary>True for a repository found through the GitHub list that is not installed; it only becomes a result when it turns out to be a Unity package.</summary>
+            public bool IsCandidate;
         }
 
         private static readonly List<PendingRequest> _pending = new List<PendingRequest>();
         private static readonly List<PackageUpdateInfo> _results = new List<PackageUpdateInfo>();
+        private static readonly List<GitHubRepository> _repositories = new List<GitHubRepository>();
+        private static UnityWebRequest _listRequest;
+        private static int _listPage;
         private static bool _userInitiated;
+        private static bool _polling;
+        private static PackageDependencyGraph _graph = new PackageDependencyGraph();
+        private static List<ProjectPackageFolder> _projectFolders;
 
-        /// <summary>The result of the latest check, one entry per installed Tauntastic git package.</summary>
+        /// <summary>The result of the latest check: installed Tauntastic git packages and, when discovery is on, installable ones.</summary>
         public static IReadOnlyList<PackageUpdateInfo> Results
         {
             get { return _results; }
@@ -46,8 +54,11 @@ namespace Tauntastic.Packages.Editor
         /// <summary>True while a check is running.</summary>
         public static bool IsChecking
         {
-            get { return _pending.Count > 0; }
+            get { return _pending.Count > 0 || _listRequest != null; }
         }
+
+        /// <summary>Why listing the GitHub repositories failed, or null when it worked or was not tried.</summary>
+        public static string DiscoveryError { get; private set; }
 
         /// <summary>Raised on the main thread whenever <see cref="Results"/> changes.</summary>
         public static event Action Changed;
@@ -67,13 +78,26 @@ namespace Tauntastic.Packages.Editor
             CheckNow(false);
         }
 
+        /// <summary>Called when the Updates window opens: scans when there are no results yet, the automatic check is on and the last scan is older than the interval in the preferences.</summary>
+        public static void ScanIfEmptyAndDue()
+        {
+            if (_results.Count > 0 || IsChecking || Application.isBatchMode)
+                return;
+            if (!PackageUpdateSettings.IsAutomaticCheckDue())
+                return;
+            if (Application.internetReachability == NetworkReachability.NotReachable)
+                return;
+
+            CheckNow(false);
+        }
+
         [MenuItem(_MENU_PATH + "Check For Updates", false, PackageMenuPriority.CheckForUpdates)]
         private static void CheckFromMenu()
         {
             CheckNow(true);
         }
 
-        /// <summary>Starts a check of all installed Tauntastic git packages. Does nothing when one is already running.</summary>
+        /// <summary>Starts a check of all installed Tauntastic git packages and of the GitHub account. Does nothing when one is already running.</summary>
         /// <param name="userInitiated">When true the outcome is always reported and the window is shown, even when nothing changed.</param>
         public static void CheckNow(bool userInitiated)
         {
@@ -82,6 +106,9 @@ namespace Tauntastic.Packages.Editor
 
             _userInitiated = userInitiated;
             _results.Clear();
+            _repositories.Clear();
+            _projectFolders = null;
+            DiscoveryError = null;
 
             foreach (PackageInfo package in PackageInfo.GetAllRegisteredPackages())
             {
@@ -99,50 +126,86 @@ namespace Tauntastic.Packages.Editor
                     Name = package.name,
                     DisplayName = string.IsNullOrEmpty(package.displayName) ? package.name : package.displayName,
                     InstalledVersion = package.version,
+                    Description = package.description,
                     Reference = reference,
+                    IsInstalled = true,
                 };
                 _results.Add(info);
-
-                string token = PackageUpdateSettings.GitHubToken;
-                bool hasToken = !string.IsNullOrEmpty(token);
-
-                // With a token use the GitHub API (clear error messages, official fine-grained token support);
-                // without one use the plain raw file URL, which needs no login for public repositories.
-                UnityWebRequest request = UnityWebRequest.Get(hasToken ? reference.ApiPackageJsonUrl : reference.RawPackageJsonUrl);
-                request.timeout = _TIMEOUT_SECONDS;
-
-                if (hasToken)
-                {
-                    request.SetRequestHeader("Authorization", "Bearer " + token);
-                    request.SetRequestHeader("Accept", "application/vnd.github.raw+json");
-                    request.SetRequestHeader("X-GitHub-Api-Version", "2022-11-28");
-                }
-                request.SendWebRequest();
-                _pending.Add(new PendingRequest { Info = info, Request = request });
+                StartManifestRequest(info, false);
             }
 
-            // This package always comes first in the list, the rest follow alphabetically.
-            _results.Sort((a, b) =>
-            {
-                bool aSelf = a.Name == PackageMenuPriority.SelfPackageName;
-                bool bSelf = b.Name == PackageMenuPriority.SelfPackageName;
-                if (aSelf != bSelf)
-                    return aSelf ? -1 : 1;
-                return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
-            });
+            SortResults();
+            StartDiscovery();
 
-            if (_pending.Count == 0)
+            if (!IsChecking)
             {
                 FinishCheck();
                 return;
             }
 
-            EditorApplication.update += Poll;
+            if (!_polling)
+            {
+                _polling = true;
+                EditorApplication.update += Poll;
+            }
             RaiseChanged();
+        }
+
+        private static UnityWebRequest CreateRequest(string url)
+        {
+            UnityWebRequest request = UnityWebRequest.Get(url);
+            request.timeout = _TIMEOUT_SECONDS;
+
+            string token = PackageUpdateSettings.GitHubToken;
+            if (!string.IsNullOrEmpty(token))
+                request.SetRequestHeader("Authorization", "Bearer " + token);
+
+            request.SetRequestHeader("X-GitHub-Api-Version", "2022-11-28");
+            return request;
+        }
+
+        private static void StartManifestRequest(PackageUpdateInfo info, bool isCandidate)
+        {
+            // With a token use the GitHub API (clear error messages, official fine-grained token support);
+            // without one use the plain raw file URL, which needs no login for public repositories.
+            bool hasToken = !string.IsNullOrEmpty(PackageUpdateSettings.GitHubToken);
+            UnityWebRequest request = CreateRequest(hasToken ? info.Reference.ApiPackageJsonUrl : info.Reference.RawPackageJsonUrl);
+            if (hasToken)
+                request.SetRequestHeader("Accept", "application/vnd.github.raw+json");
+
+            request.SendWebRequest();
+            _pending.Add(new PendingRequest { Info = info, Request = request, IsCandidate = isCandidate });
+        }
+
+        private static void StartDiscovery()
+        {
+            if (!PackageUpdateSettings.DiscoverPackages)
+                return;
+
+            _listPage = 1;
+            SendListRequest();
+        }
+
+        private static void SendListRequest()
+        {
+            string owner = PackageUpdateSettings.GitHubOwner;
+            bool hasToken = !string.IsNullOrEmpty(PackageUpdateSettings.GitHubToken);
+
+            // With a token the authenticated list also contains private repositories; it is filtered by owner afterwards.
+            string url = hasToken
+                ? "https://api.github.com/user/repos?per_page=" + _PAGE_SIZE + "&affiliation=owner,organization_member&page=" + _listPage
+                : "https://api.github.com/users/" + owner + "/repos?per_page=" + _PAGE_SIZE + "&type=owner&page=" + _listPage;
+
+            _listRequest = CreateRequest(url);
+            _listRequest.SetRequestHeader("Accept", "application/vnd.github+json");
+            _listRequest.SendWebRequest();
         }
 
         private static void Poll()
         {
+            if (_listRequest != null && _listRequest.isDone)
+                HandleListResponse();
+
             for (int i = _pending.Count - 1; i >= 0; i--)
             {
                 PendingRequest pending = _pending[i];
@@ -154,14 +217,85 @@ namespace Tauntastic.Packages.Editor
                 _pending.RemoveAt(i);
             }
 
-            if (_pending.Count > 0)
+            if (IsChecking)
             {
                 RaiseChanged();
                 return;
             }
 
             EditorApplication.update -= Poll;
+            _polling = false;
             FinishCheck();
+        }
+
+        private static void HandleListResponse()
+        {
+            UnityWebRequest request = _listRequest;
+            _listRequest = null;
+
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                PackageFailureKind ignored;
+                DiscoveryError = "Could not list the repositories of " + PackageUpdateSettings.GitHubOwner + ": " + DescribeFailure(request, out ignored);
+                request.Dispose();
+                return;
+            }
+
+            string body = request.downloadHandler.text;
+            request.Dispose();
+
+            List<GitHubRepository> page = GitHubRepository.ParseList(body);
+            _repositories.AddRange(page);
+
+            if (page.Count >= _PAGE_SIZE && _listPage < _MAX_PAGES)
+            {
+                _listPage++;
+                SendListRequest();
+                return;
+            }
+
+            StartCandidateRequests();
+        }
+
+        /// <summary>For every repository of the owner named Tauntastic.* that is not installed, reads its package.json to find out whether it is a Unity package.</summary>
+        private static void StartCandidateRequests()
+        {
+            string owner = PackageUpdateSettings.GitHubOwner;
+
+            foreach (GitHubRepository repository in _repositories)
+            {
+                if (!repository.Matches(owner, PackageUpdateSettings.RepositoryNamePrefix))
+                    continue;
+                if (IsRepositoryInstalled(repository))
+                    continue;
+
+                GitPackageReference reference;
+                if (!GitPackageReference.TryParse("candidate@" + repository.CloneUrl, out reference))
+                    continue;
+
+                var info = new PackageUpdateInfo
+                {
+                    Name = repository.Name,
+                    DisplayName = repository.Name,
+                    Description = repository.Description,
+                    Reference = reference,
+                    IsInstalled = false,
+                    IsPrivateRepository = repository.IsPrivate,
+                };
+                StartManifestRequest(info, true);
+            }
+        }
+
+        private static bool IsRepositoryInstalled(GitHubRepository repository)
+        {
+            foreach (PackageUpdateInfo info in _results)
+            {
+                if (info.IsInstalled && info.Reference != null &&
+                    string.Equals(info.Reference.Owner, repository.Owner, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(info.Reference.Repository, repository.Name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
 
         private static void Resolve(PendingRequest pending)
@@ -170,41 +304,196 @@ namespace Tauntastic.Packages.Editor
 
             if (pending.Request.result != UnityWebRequest.Result.Success)
             {
+                // A repository without a root package.json is simply not a Unity package: leave it out of the list.
+                if (pending.IsCandidate && pending.Request.responseCode == 404)
+                    return;
+
                 info.Status = PackageUpdateStatus.Failed;
                 PackageFailureKind kind;
                 info.Error = DescribeFailure(pending.Request, out kind);
                 info.FailureKind = kind;
+                if (pending.IsCandidate)
+                    AddResult(info);
                 return;
             }
 
-            RemotePackageJson remote = null;
-            try
+            PackageManifest manifest;
+            if (!PackageManifest.TryParse(pending.Request.downloadHandler.text, out manifest))
             {
-                remote = JsonUtility.FromJson<RemotePackageJson>(pending.Request.downloadHandler.text);
-            }
-            catch (Exception exception)
-            {
+                // Not a Unity package (no name and valid version in the package.json).
+                if (pending.IsCandidate)
+                    return;
+
                 info.Status = PackageUpdateStatus.Failed;
-                info.Error = exception.Message;
+                info.Error = "The remote package.json has no valid name and version.";
                 info.FailureKind = PackageFailureKind.InvalidResponse;
                 return;
             }
 
-            PackageVersion parsed;
-            if (remote == null || !PackageVersion.TryParse(remote.version, out parsed))
+            info.Manifest = manifest;
+            info.LatestVersion = manifest.Version;
+            info.Unity = manifest.Unity;
+            if (!string.IsNullOrEmpty(manifest.Description))
+                info.Description = manifest.Description;
+
+            if (pending.IsCandidate)
             {
-                info.Status = PackageUpdateStatus.Failed;
-                info.Error = "The remote package.json has no valid version.";
-                info.FailureKind = PackageFailureKind.InvalidResponse;
+                // The same package may already be installed from another URL.
+                if (FindByName(manifest.Name) != null)
+                    return;
+
+                info.Name = manifest.Name;
+                info.DisplayName = string.IsNullOrEmpty(manifest.DisplayName) ? manifest.Name : manifest.DisplayName;
+                // The project already holds the folder of this package (this is its source project): never offer to install it again.
+                ProjectPackageFolder folder = FindProjectFolder(manifest.Name, info.Reference.Repository);
+                info.SourceFolderPath = folder != null ? folder.Path : null;
+                info.SourceFolderVersion = folder != null ? folder.Version : string.Empty;
+                info.Status = folder != null ? PackageUpdateStatus.SourceFolder : PackageUpdateStatus.Installable;
+                AddResult(info);
                 return;
             }
 
-            info.LatestVersion = remote.version;
-            info.Status = PackageVersion.IsNewer(remote.version, info.InstalledVersion)
+            info.Status = PackageVersion.IsNewer(manifest.Version, info.InstalledVersion)
                 ? PackageUpdateStatus.UpdateAvailable
                 : PackageUpdateStatus.UpToDate;
         }
 
+        /// <summary>The folder of this project (under Assets or Packages) that holds the package, or null. Found by its package.json: same package name, same repository, or a folder named after the package.</summary>
+        private static ProjectPackageFolder FindProjectFolder(string packageName, string repositoryName)
+        {
+            foreach (ProjectPackageFolder folder in GetProjectFolders())
+            {
+                if (folder.Matches(packageName, repositoryName))
+                    return folder;
+            }
+            return null;
+        }
+
+        /// <summary>Every package.json under the project's Assets and Packages folders, scanned once per check.</summary>
+        private static List<ProjectPackageFolder> GetProjectFolders()
+        {
+            if (_projectFolders != null)
+                return _projectFolders;
+
+            var folders = new List<ProjectPackageFolder>();
+            try
+            {
+                string root = System.IO.Directory.GetParent(Application.dataPath).FullName;
+                ScanForPackageJson(folders, root, Application.dataPath);
+                ScanForPackageJson(folders, root, System.IO.Path.Combine(root, "Packages"));
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("[Tauntastic.Packages] Could not scan the project for package folders: " + exception.Message);
+            }
+
+            _projectFolders = folders;
+            return folders;
+        }
+
+        private static void ScanForPackageJson(List<ProjectPackageFolder> folders, string projectRoot, string directory)
+        {
+            if (!System.IO.Directory.Exists(directory))
+                return;
+
+            foreach (string file in System.IO.Directory.EnumerateFiles(directory, "package.json", System.IO.SearchOption.AllDirectories))
+            {
+                try
+                {
+                    string folderPath = System.IO.Path.GetDirectoryName(file);
+                    string relative = folderPath.Substring(projectRoot.Length).TrimStart('\\', '/');
+
+                    ProjectPackageFolder folder;
+                    if (ProjectPackageFolder.TryParse(relative, System.IO.File.ReadAllText(file), out folder))
+                        folders.Add(folder);
+                }
+                catch (System.IO.IOException)
+                {
+                    // An unreadable file is simply not a package folder.
+                }
+            }
+        }
+
+        private static void AddResult(PackageUpdateInfo info)
+        {
+            _results.Add(info);
+            SortResults();
+        }
+
+        /// <summary>This package first, then installed packages, then installable ones; each group alphabetical.</summary>
+        private static void SortResults()
+        {
+            _results.Sort((a, b) =>
+            {
+                bool aSelf = a.Name == PackageMenuPriority.SelfPackageName;
+                bool bSelf = b.Name == PackageMenuPriority.SelfPackageName;
+                if (aSelf != bSelf)
+                    return aSelf ? -1 : 1;
+                if (a.IsInstalled != b.IsInstalled)
+                    return a.IsInstalled ? -1 : 1;
+                return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+
+        /// <summary>The known package with this package name (installed or installable), or null.</summary>
+        public static PackageUpdateInfo FindByName(string packageName)
+        {
+            foreach (PackageUpdateInfo info in _results)
+            {
+                if (string.Equals(info.Name, packageName, StringComparison.OrdinalIgnoreCase))
+                    return info;
+            }
+            return null;
+        }
+
+        /// <summary>Everything the package depends on (its child dependencies), direct and indirect, depth first.</summary>
+        public static List<DependencyEntry> GetDependencies(PackageUpdateInfo info)
+        {
+            return _graph.GetDependencies(info.Name);
+        }
+
+        /// <summary>Every known package that depends on this one (its parent dependencies), direct and indirect, depth first.</summary>
+        public static List<DependencyEntry> GetDependents(PackageUpdateInfo info)
+        {
+            return _graph.GetDependents(info.Name);
+        }
+
+        /// <summary>Short text about a package name found in a dependency list: installed version, installable, or external.</summary>
+        public static string DescribeDependency(string packageName)
+        {
+            PackageUpdateInfo known = FindByName(packageName);
+            if (known != null)
+            {
+                if (known.IsInstalled)
+                    return "installed " + known.InstalledVersion;
+                if (known.Status == PackageUpdateStatus.Installable)
+                    return "installable " + known.LatestVersion;
+                if (known.Status == PackageUpdateStatus.SourceFolder)
+                    return "source code in the project";
+                return "unavailable";
+            }
+
+            foreach (PackageInfo package in PackageInfo.GetAllRegisteredPackages())
+            {
+                if (string.Equals(package.name, packageName, StringComparison.OrdinalIgnoreCase))
+                    return "installed " + package.version;
+            }
+
+            return "not installed";
+        }
+
+        private static void RebuildGraph()
+        {
+            var graph = new PackageDependencyGraph();
+            foreach (PackageUpdateInfo info in _results)
+            {
+                if (info.Manifest != null)
+                    graph.Add(info.Name, info.Manifest.Dependencies.Keys);
+            }
+            _graph = graph;
+        }
+
+        /// <summary>Shape of the error body GitHub returns, used to read its message.</summary>
         [Serializable]
         private class GitHubError
         {
@@ -251,8 +540,8 @@ namespace Tauntastic.Packages.Editor
                 case 403:
                     kind = PackageFailureKind.TokenRejected;
                     return hasToken
-                        ? "GitHub rejected the token (expired, revoked or without access). Check it in Preferences > Tools > Tauntastic > Packages."
-                        : "GitHub refused the request. Add a GitHub token in Preferences > Tools > Tauntastic > Packages.";
+                        ? "GitHub rejected the token (expired, revoked, without access, or the API rate limit was hit). Check it in Preferences > Tools > Tauntastic > Packages."
+                        : "GitHub refused the request (possibly the unauthenticated API rate limit of 60 requests per hour). Add a GitHub token in Preferences > Tools > Tauntastic > Packages.";
                 default:
                     kind = request.result == UnityWebRequest.Result.ConnectionError
                         ? PackageFailureKind.Network
@@ -264,12 +553,17 @@ namespace Tauntastic.Packages.Editor
         private static void FinishCheck()
         {
             PackageUpdateSettings.LastCheckUtc = DateTime.UtcNow;
+            RebuildGraph();
             RaiseChanged();
 
             var signature = new StringBuilder();
             int updateCount = 0;
+            int installableCount = 0;
             foreach (PackageUpdateInfo info in _results)
             {
+                if (info.Status == PackageUpdateStatus.Installable)
+                    installableCount++;
+
                 if (info.Status != PackageUpdateStatus.UpdateAvailable)
                     continue;
 
@@ -286,11 +580,15 @@ namespace Tauntastic.Packages.Editor
                 {
                     int failed = _results.FindAll(r => r.Status == PackageUpdateStatus.Failed).Count;
                     if (_results.Count == 0)
-                        Debug.Log("[Tauntastic.Packages] No Tauntastic packages installed from a GitHub git URL were found.");
+                        Debug.Log("[Tauntastic.Packages] No Tauntastic packages were found.");
                     else if (failed > 0)
                         Debug.LogWarning("[Tauntastic.Packages] " + failed + " of " + _results.Count + " packages could not be checked. See the Updates window.");
                     else
-                        Debug.Log("[Tauntastic.Packages] All installed Tauntastic packages are up to date.");
+                        Debug.Log("[Tauntastic.Packages] All installed Tauntastic packages are up to date." +
+                                  (installableCount > 0 ? " " + installableCount + " more can be installed." : string.Empty));
+
+                    if (!string.IsNullOrEmpty(DiscoveryError))
+                        Debug.LogWarning("[Tauntastic.Packages] " + DiscoveryError);
                     PackageUpdateWindow.Open();
                 }
                 return;
@@ -318,6 +616,17 @@ namespace Tauntastic.Packages.Editor
         /// <summary>Installs the latest version of the package from its branch through the Package Manager.</summary>
         public static void Update(PackageUpdateInfo info)
         {
+            InstallOrUpdate(info, "Updated");
+        }
+
+        /// <summary>Installs a package that is only found in the GitHub account through the Package Manager. Its own dependencies given as git URLs in its package.json are installed by Unity as well.</summary>
+        public static void Install(PackageUpdateInfo info)
+        {
+            InstallOrUpdate(info, "Installed");
+        }
+
+        private static void InstallOrUpdate(PackageUpdateInfo info, string pastTense)
+        {
             if (info == null || info.IsUpdating)
                 return;
 
@@ -335,9 +644,9 @@ namespace Tauntastic.Packages.Editor
                 info.IsUpdating = false;
 
                 if (request.Status == StatusCode.Success)
-                    Debug.Log("[Tauntastic.Packages] Updated " + info.DisplayName + " to " + request.Result.version + ".");
+                    Debug.Log("[Tauntastic.Packages] " + pastTense + " " + info.DisplayName + " " + request.Result.version + ".");
                 else
-                    Debug.LogError("[Tauntastic.Packages] Could not update " + info.DisplayName + ": " + request.Error.message);
+                    Debug.LogError("[Tauntastic.Packages] Could not install " + info.DisplayName + ": " + request.Error.message);
 
                 RaiseChanged();
             };

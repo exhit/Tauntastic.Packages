@@ -28,6 +28,20 @@ namespace Tauntastic.Packages.Editor
                     }
 
                     EditorGUILayout.Space();
+                    EditorGUILayout.LabelField("Packages not installed yet", EditorStyles.boldLabel);
+                    PackageUpdateSettings.DiscoverPackages =
+                        EditorGUILayout.Toggle("List installable packages", PackageUpdateSettings.DiscoverPackages);
+                    using (new EditorGUI.DisabledScope(!PackageUpdateSettings.DiscoverPackages))
+                    {
+                        PackageUpdateSettings.GitHubOwner =
+                            EditorGUILayout.TextField("GitHub user or organisation", PackageUpdateSettings.GitHubOwner);
+                    }
+                    EditorGUILayout.HelpBox(
+                        "Repositories of this owner whose name starts with \"" + PackageUpdateSettings.RepositoryNamePrefix +
+                        "\" and that contain a Unity package.json at their root are listed as installable. Private repositories need the token below.",
+                        MessageType.None);
+
+                    EditorGUILayout.Space();
                     EditorGUILayout.LabelField("Private repositories", EditorStyles.boldLabel);
                     PackageUpdateSettings.GitHubToken =
                         EditorGUILayout.PasswordField("GitHub token (optional)", PackageUpdateSettings.GitHubToken);

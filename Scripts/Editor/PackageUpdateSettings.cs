@@ -15,6 +15,32 @@ namespace Tauntastic.Packages.Editor
         private const string _LAST_CHECK = _PREFIX + "LastCheckUtcTicks";
         private const string _LAST_NOTIFIED = _PREFIX + "LastNotified";
         private const string _GITHUB_TOKEN = _PREFIX + "GitHubToken";
+        private const string _OWNER = _PREFIX + "GitHubOwner";
+        private const string _DISCOVER = _PREFIX + "DiscoverPackages";
+
+        /// <summary>The GitHub user or organisation whose repositories are searched for Tauntastic packages that are not installed yet.</summary>
+        public const string DefaultOwner = "exhit";
+
+        /// <summary>Repositories of the owner whose name starts with this are candidates for the package list.</summary>
+        public const string RepositoryNamePrefix = "Tauntastic.";
+
+        /// <summary>The GitHub user or organisation to search for Tauntastic packages (default exhit).</summary>
+        public static string GitHubOwner
+        {
+            get
+            {
+                string owner = EditorPrefs.GetString(_OWNER, DefaultOwner).Trim();
+                return owner.Length == 0 ? DefaultOwner : owner;
+            }
+            set { EditorPrefs.SetString(_OWNER, (value ?? string.Empty).Trim()); }
+        }
+
+        /// <summary>Whether not-installed Tauntastic packages found in the GitHub account are listed as installable.</summary>
+        public static bool DiscoverPackages
+        {
+            get { return EditorPrefs.GetBool(_DISCOVER, true); }
+            set { EditorPrefs.SetBool(_DISCOVER, value); }
+        }
 
         /// <summary>Whether the checker runs automatically when the Editor starts.</summary>
         public static bool Enabled
@@ -23,10 +49,10 @@ namespace Tauntastic.Packages.Editor
             set { EditorPrefs.SetBool(_ENABLED, value); }
         }
 
-        /// <summary>Minimum hours between two automatic checks.</summary>
+        /// <summary>Minimum hours between two automatic checks and between two automatic scans of an empty Updates window (default 2).</summary>
         public static int IntervalHours
         {
-            get { return Math.Max(1, EditorPrefs.GetInt(_INTERVAL_HOURS, 24)); }
+            get { return Math.Max(1, EditorPrefs.GetInt(_INTERVAL_HOURS, 2)); }
             set { EditorPrefs.SetInt(_INTERVAL_HOURS, Math.Max(1, value)); }
         }
 

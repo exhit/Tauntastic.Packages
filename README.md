@@ -2,7 +2,7 @@
 
 Tells you when a newer version of an installed Tauntastic package is available. Unity's Package Manager does not notify you about updates of packages installed from a git URL; this package fills that gap with a version checker, an Updates window and one-click updates.
 
-- Package: `com.tauntastic.packages` (v1.3.0, Unity 2023.2+)
+- Package: `com.tauntastic.packages` (v1.5.0, Unity 2023.2+)
 - Assembly / namespace: `Tauntastic.Packages.Editor` (Editor-only)
 - Dependencies: none
 - AI agents: see [ARTIFICIAL_INTELLIGENCE_README.md](ARTIFICIAL_INTELLIGENCE_README.md)
@@ -20,7 +20,7 @@ https://github.com/exhit/Tauntastic.Packages.git
 3. It compares the `version` there with the installed version (`major.minor.patch`, optional `-preview` tag). A higher remote version means an update is available.
 4. If updates are found it logs a warning per package (with the changelog link) and opens the Updates window. The same set of updates is announced only once.
 
-The automatic check runs when the Editor starts, at most once every 24 hours, and silently does nothing when you are offline, in batch mode, or when the check is switched off.
+The automatic check runs when the Editor starts, at most once every 2 hours (the "Hours between checks" preference, default 2), and silently does nothing when you are offline, in batch mode, or when the check is switched off. Opening the Updates window while it has no results also starts a scan by itself, under the same limit: it only scans when the last scan is older than the interval, otherwise it waits for **Check now**.
 
 Which branch is followed:
 
@@ -35,7 +35,31 @@ Which branch is followed:
 
 - **Tools > Tauntastic > Packages > Updates** (always the first entries of the Tauntastic menu) - the Updates window: installed vs. latest version, status, **Update**, **Changelog** and **Repository** buttons, **Check now**.
 - **Tools > Tauntastic > Packages > Check For Updates** - runs a check immediately and always reports the outcome.
-- **Preferences > Tools > Tauntastic > Packages** - switch the automatic check on or off, set the hours between checks and choose whether the window opens by itself.
+- **Preferences > Tools > Tauntastic > Packages** - switch the automatic check on or off, set the hours between checks, choose whether the window opens by itself, list installable packages (and the GitHub owner to search) and set the GitHub token.
+
+## Installable packages
+
+Besides the installed packages, the window lists **Tauntastic packages that exist in your GitHub account but are not installed in this project**:
+
+1. It lists the repositories of the configured owner (default `exhit`, change it in Preferences) whose name starts with `Tauntastic.`. Without a token only public repositories are listed; with a token private ones are included too.
+2. For every repository that is not installed it reads the `package.json` at the repository root. Only repositories that have one with a `name` and a valid `version` are Unity packages; the rest are left out.
+3. Those packages get the `INSTALLABLE` flag, their description, version and minimum Unity version, and an **Install** button that adds the package from its git URL through the Package Manager. Unity installs the git-URL dependencies written in its `package.json` as well. **Show installable** in the toolbar hides them and **List installable packages** in Preferences turns the discovery off.
+
+Discovery uses the GitHub API (at most one request per 100 repositories, plus one `package.json` request per repository). Without a token the API allows 60 requests per hour per IP address; add a token if you hit that limit.
+
+### Source code
+
+If the project already contains the folder of a package (this is the case in the source project where you develop the packages), that package is **not** offered for installation. It gets the `SOURCE CODE` flag instead, an info box with the message "the folder for this package already exists in the project" and the folder path; the row shows **Installed in folder** with the folder path and, on the next line, **Source code version** with the version written in the folder's `package.json` and an **Open folder** button that selects the folder in the Project window. There is no Install button for these packages.
+
+The project is scanned for `package.json` files under `Assets/` and `Packages/` once per check. A folder counts as the package when any of these match: the `name` in its `package.json`, the repository in its `repository.url`, or the folder name (`com.tauntastic.x` for the package `com.tauntastic.x`, or for the repository `Tauntastic.X`).
+
+## Dependencies foldout
+
+Every package row has a **Dependencies** foldout, built from the `dependencies` of the `package.json` files of all known packages (installed and installable):
+
+- **Depends on (child dependencies)** - everything the package needs, direct first, with indirect dependencies indented underneath.
+- **Required by (parent dependencies)** - every known Tauntastic package that depends on it, directly or indirectly.
+- Each name shows its state: `installed 1.2.0`, `installable 1.0.0` or `not installed` (for example Unity packages that are not in the project).
 
 ## Status flags
 
@@ -45,6 +69,9 @@ Each package row has a colored flag, a tinted background and a colored edge. A s
 |---|---|---|
 | `UP TO DATE` | green | The installed version is the latest. |
 | `UPDATE AVAILABLE` | orange | A newer version is on the branch. |
+| `INSTALLABLE` | teal | A Unity package of your GitHub account that is not installed in this project. |
+| `SOURCE CODE` | indigo | A package of your GitHub account whose folder already exists in this project, so it is not installed from git. |
+| `PRIVATE` | dark gray | Extra flag: the repository is private. |
 | `CHECKING` | gray | The request is still running. |
 | `NOT FOUND / PRIVATE` | red | HTTP 404: the repository or its package.json does not exist, or it is private and no token (or one without access) was sent. |
 | `TOKEN REJECTED` | purple | HTTP 401 or 403: GitHub refused the request or the token. |
@@ -67,7 +94,10 @@ foreach (PackageUpdateInfo info in PackageUpdateChecker.Results)
     Debug.Log($"{info.Name}: {info.InstalledVersion} -> {info.LatestVersion} ({info.Status})");
 
 PackageUpdateChecker.Changed += () => { /* results changed */ };
-PackageUpdateChecker.Update(info);              // install the latest version
+PackageUpdateChecker.Update(info);              // install the latest version of an installed package
+PackageUpdateChecker.Install(info);             // install a package with Status == Installable
+PackageUpdateChecker.GetDependencies(info);     // child dependencies (direct and indirect)
+PackageUpdateChecker.GetDependents(info);       // parent dependencies (what depends on it)
 PackageVersion.IsNewer("1.2.0", "1.1.0");       // true
 ```
 

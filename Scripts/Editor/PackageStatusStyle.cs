@@ -8,6 +8,8 @@ namespace Tauntastic.Packages.Editor
         public static readonly Color Checking = new Color(0.45f, 0.45f, 0.45f);
         public static readonly Color UpToDate = new Color(0.20f, 0.55f, 0.30f);
         public static readonly Color UpdateAvailable = new Color(0.90f, 0.55f, 0.10f);
+        public static readonly Color Installable = new Color(0.10f, 0.58f, 0.65f);
+        public static readonly Color SourceFolder = new Color(0.38f, 0.40f, 0.82f);
         public static readonly Color NotFoundOrPrivate = new Color(0.75f, 0.22f, 0.22f);
         public static readonly Color TokenRejected = new Color(0.60f, 0.28f, 0.70f);
         public static readonly Color Network = new Color(0.25f, 0.45f, 0.75f);
@@ -20,6 +22,8 @@ namespace Tauntastic.Packages.Editor
             {
                 case PackageUpdateStatus.UpToDate: return UpToDate;
                 case PackageUpdateStatus.UpdateAvailable: return UpdateAvailable;
+                case PackageUpdateStatus.Installable: return Installable;
+                case PackageUpdateStatus.SourceFolder: return SourceFolder;
                 case PackageUpdateStatus.Failed: return GetColor(info.FailureKind);
                 default: return Checking;
             }
@@ -45,6 +49,8 @@ namespace Tauntastic.Packages.Editor
             {
                 case PackageUpdateStatus.UpToDate: return "UP TO DATE";
                 case PackageUpdateStatus.UpdateAvailable: return "UPDATE AVAILABLE";
+                case PackageUpdateStatus.Installable: return "INSTALLABLE";
+                case PackageUpdateStatus.SourceFolder: return "SOURCE CODE";
                 case PackageUpdateStatus.Failed: return GetFlag(info.FailureKind);
                 default: return "CHECKING";
             }

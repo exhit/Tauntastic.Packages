@@ -6,6 +6,13 @@ namespace Tauntastic.Packages.Editor
         Checking,
         UpToDate,
         UpdateAvailable,
+
+        /// <summary>The package exists in the GitHub account as a Unity package but is not installed in this project.</summary>
+        Installable,
+
+        /// <summary>The package is in the GitHub account and the project already has its folder (under Assets or Packages), so this is the source project of the package and it must not be installed again.</summary>
+        SourceFolder,
+
         Failed,
     }
 
@@ -43,6 +50,27 @@ namespace Tauntastic.Packages.Editor
         public PackageFailureKind FailureKind;
 
         public GitPackageReference Reference;
+
+        /// <summary>True when the package is installed in this project; false for packages that are only found in the GitHub account.</summary>
+        public bool IsInstalled;
+
+        /// <summary>Project relative path of the folder that holds this package inside the project (for example Assets/Tauntastic/com.tauntastic.cloning), or null.</summary>
+        public string SourceFolderPath;
+
+        /// <summary>Version written in the package.json of the source code, or an empty string.</summary>
+        public string SourceFolderVersion;
+
+        /// <summary>True when the repository is private (only known for packages found through the GitHub repository list).</summary>
+        public bool IsPrivateRepository;
+
+        /// <summary>Description from the package.json (or the repository when the package.json has none).</summary>
+        public string Description;
+
+        /// <summary>Minimum Unity version from the package.json, or an empty string.</summary>
+        public string Unity;
+
+        /// <summary>The package.json at the head of the followed branch, used for the dependency lists; null until it was read.</summary>
+        public PackageManifest Manifest;
 
         /// <summary>True while an update of this package is being installed.</summary>
         public bool IsUpdating;

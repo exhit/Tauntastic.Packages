@@ -22,3 +22,17 @@
 
 - With a GitHub token the check now uses the GitHub API (Bearer authorization) instead of the raw file URL, and failure messages include what GitHub answered (for example "Bad credentials")
 - Clearer guidance for fine-grained tokens (resource owner, repository list, Contents: Read)
+
+## 1.4.0
+
+- Packages of your GitHub account (default owner exhit, repositories named Tauntastic.*) that contain a Unity package.json are listed even when they are not installed, with an INSTALLABLE flag and an Install button
+- Dependencies foldout on every package: child dependencies (what it needs, direct and indirect) and parent dependencies (what needs it)
+- Preferences: switch the discovery on or off and choose the GitHub owner
+- Window: Show installable toggle, package description and minimum Unity version, PRIVATE flag
+- Packages whose folder already exists in the project (the source project of the packages) get a SOURCE CODE flag instead of INSTALLABLE: there is no Install button, the folder path is shown and an Open folder button selects it
+
+## 1.5.0
+
+- The Updates window scans by itself when it opens with no results, limited by the "Hours between checks" preference (the last scan must be older than the interval)
+- The default interval between automatic scans is now 2 hours (was 24); an interval you saved in the preferences is kept
+- Clearer message in the empty window explaining when the next automatic scan happens

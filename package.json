@@ -1,8 +1,8 @@
 {
   "name": "com.tauntastic.packages",
-  "version": "1.3.0",
+  "version": "1.5.0",
   "displayName": "Tauntastic.Packages",
-  "description": "Tells you when a newer version of an installed Tauntastic git package is available on GitHub, with a window to review and update them",
+  "description": "Tells you when a newer version of an installed Tauntastic git package is available on GitHub, lists Tauntastic packages you can still install, and shows their dependencies, all in one window",
   "unity": "2023.2",
   "author": {
     "name": "Taunting",

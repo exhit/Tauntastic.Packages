@@ -1,17 +1,21 @@
 using System;
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
 namespace Tauntastic.Packages.Editor
 {
-    /// <summary>Editor window (Tools > Tauntastic > Packages > Updates) that lists the installed Tauntastic git packages with their installed and latest versions, a colored status flag per package and per kind of failure, and lets you update them.</summary>
+    /// <summary>Editor window (Tools > Tauntastic > Packages > Updates) that lists the installed Tauntastic git packages and the Tauntastic packages found in the GitHub account that are not installed yet, with a colored status flag per package and per kind of failure, update and install buttons, and a Dependencies foldout.</summary>
     public class PackageUpdateWindow : EditorWindow
     {
         private const string _TITLE = "Tauntastic Packages";
         private const float _ROW_TINT_ALPHA = 0.18f;
+        private const float _INDENT_PER_LEVEL = 14f;
 
         private static GUIStyle _flagStyle;
+        private readonly HashSet<string> _dependencyFoldouts = new HashSet<string>();
         private Vector2 _scroll;
+        private bool _showInstallable = true;
 
         /// <summary>Opens the window, or brings it to the front if it is already open.</summary>
         [MenuItem("Tools/Tauntastic/Packages/Updates", false, PackageMenuPriority.Updates)]
@@ -26,6 +30,9 @@ namespace Tauntastic.Packages.Editor
         {
             PackageUpdateChecker.Changed += OnResultsChanged;
             UpdateTitle();
+
+            // An empty window scans by itself, limited by the "hours between checks" preference.
+            EditorApplication.delayCall += PackageUpdateChecker.ScanIfEmptyAndDue;
         }
 
         private void OnDisable()
@@ -59,24 +66,36 @@ namespace Tauntastic.Packages.Editor
             DrawToolbar();
             DrawSummary();
 
+            if (!string.IsNullOrEmpty(PackageUpdateChecker.DiscoveryError))
+                EditorGUILayout.HelpBox(PackageUpdateChecker.DiscoveryError, MessageType.Warning);
+
             var results = PackageUpdateChecker.Results;
             if (results.Count == 0)
             {
-                EditorGUILayout.HelpBox(
-                    PackageUpdateChecker.IsChecking
-                        ? "Checking..."
-                        : "No Tauntastic package installed from a GitHub git URL was found yet. Press Check now.",
-                    MessageType.Info);
+                string message;
+                if (PackageUpdateChecker.IsChecking)
+                    message = "Checking...";
+                else if (!PackageUpdateSettings.Enabled)
+                    message = "No scan results yet. Automatic scans are switched off in the preferences. Press Check now to scan.";
+                else
+                    message = "No scan results yet. The window scans by itself when the last scan is more than " +
+                              PackageUpdateSettings.IntervalHours + " hour(s) old (see the preferences). Press Check now to scan immediately.";
+
+                EditorGUILayout.HelpBox(message, MessageType.Info);
                 return;
             }
 
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
             foreach (PackageUpdateInfo info in results)
+            {
+                if (!_showInstallable && (info.Status == PackageUpdateStatus.Installable || info.Status == PackageUpdateStatus.SourceFolder))
+                    continue;
                 DrawRow(info);
+            }
             EditorGUILayout.EndScrollView();
         }
 
-        private static void DrawToolbar()
+        private void DrawToolbar()
         {
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
@@ -85,6 +104,8 @@ namespace Tauntastic.Packages.Editor
                     if (GUILayout.Button("Check now", EditorStyles.toolbarButton, GUILayout.Width(80f)))
                         PackageUpdateChecker.CheckNow(true);
                 }
+
+                _showInstallable = GUILayout.Toggle(_showInstallable, "Show installable", EditorStyles.toolbarButton, GUILayout.Width(110f));
 
                 GUILayout.FlexibleSpace();
 
@@ -104,7 +125,7 @@ namespace Tauntastic.Packages.Editor
             if (results.Count == 0)
                 return;
 
-            int updates = 0, upToDate = 0, checking = 0;
+            int updates = 0, upToDate = 0, installable = 0, sourceFolders = 0, checking = 0;
             var failures = new int[Enum.GetValues(typeof(PackageFailureKind)).Length];
 
             foreach (PackageUpdateInfo info in results)
@@ -113,6 +134,8 @@ namespace Tauntastic.Packages.Editor
                 {
                     case PackageUpdateStatus.UpdateAvailable: updates++; break;
                     case PackageUpdateStatus.UpToDate: upToDate++; break;
+                    case PackageUpdateStatus.Installable: installable++; break;
+                    case PackageUpdateStatus.SourceFolder: sourceFolders++; break;
                     case PackageUpdateStatus.Failed: failures[(int)info.FailureKind]++; break;
                     default: checking++; break;
                 }
@@ -121,6 +144,8 @@ namespace Tauntastic.Packages.Editor
             using (new EditorGUILayout.HorizontalScope())
             {
                 if (updates > 0) DrawFlag(updates + " UPDATE AVAILABLE", PackageStatusStyle.UpdateAvailable);
+                if (installable > 0) DrawFlag(installable + " INSTALLABLE", PackageStatusStyle.Installable);
+                if (sourceFolders > 0) DrawFlag(sourceFolders + " SOURCE CODE", PackageStatusStyle.SourceFolder);
                 if (checking > 0) DrawFlag(checking + " CHECKING", PackageStatusStyle.Checking);
                 foreach (PackageFailureKind kind in Enum.GetValues(typeof(PackageFailureKind)))
                 {
@@ -133,7 +158,7 @@ namespace Tauntastic.Packages.Editor
             }
         }
 
-        private static void DrawRow(PackageUpdateInfo info)
+        private void DrawRow(PackageUpdateInfo info)
         {
             Color color = PackageStatusStyle.GetColor(info);
 
@@ -149,21 +174,62 @@ namespace Tauntastic.Packages.Editor
             {
                 GUILayout.Label(info.DisplayName, EditorStyles.boldLabel);
                 GUILayout.FlexibleSpace();
+                if (info.IsPrivateRepository)
+                    DrawFlag("PRIVATE", new Color(0.35f, 0.35f, 0.35f));
                 DrawFlag(PackageStatusStyle.GetFlag(info), color);
             }
 
-            EditorGUILayout.LabelField("Installed", info.InstalledVersion);
+            if (!string.IsNullOrEmpty(info.Description))
+                EditorGUILayout.LabelField(info.Description, EditorStyles.wordWrappedMiniLabel);
+
+            if (info.Status == PackageUpdateStatus.SourceFolder)
+            {
+                EditorGUILayout.LabelField("Installed in folder", info.SourceFolderPath);
+                EditorGUILayout.LabelField("Source code version", string.IsNullOrEmpty(info.SourceFolderVersion) ? "-" : info.SourceFolderVersion);
+            }
+            else if (info.IsInstalled)
+                EditorGUILayout.LabelField("Installed", info.InstalledVersion);
+            else
+                EditorGUILayout.LabelField("Installed", "not installed");
             EditorGUILayout.LabelField("Latest", string.IsNullOrEmpty(info.LatestVersion) ? "-" : info.LatestVersion);
+            if (!string.IsNullOrEmpty(info.Unity))
+                EditorGUILayout.LabelField("Unity", info.Unity + " or newer");
 
             if (info.Status == PackageUpdateStatus.Failed && !string.IsNullOrEmpty(info.Error))
                 EditorGUILayout.HelpBox(info.Error, MessageType.Warning);
 
+            if (info.Status == PackageUpdateStatus.SourceFolder)
+            {
+                EditorGUILayout.HelpBox(
+                    "Source code: the folder for this package already exists in the project:\n" + info.SourceFolderPath +
+                    "\nThis is the source of the package, so it is not installed from git.",
+                    MessageType.Info);
+            }
+
+            DrawDependencies(info);
+
             using (new EditorGUILayout.HorizontalScope())
             {
-                using (new EditorGUI.DisabledScope(info.Status != PackageUpdateStatus.UpdateAvailable || info.IsUpdating))
+                if (info.Status == PackageUpdateStatus.SourceFolder)
                 {
-                    if (GUILayout.Button(info.IsUpdating ? "Updating..." : "Update", GUILayout.Width(90f)))
-                        PackageUpdateChecker.Update(info);
+                    if (GUILayout.Button("Open folder", GUILayout.Width(90f)))
+                        OpenSourceFolder(info.SourceFolderPath);
+                }
+                else if (info.Status == PackageUpdateStatus.Installable)
+                {
+                    using (new EditorGUI.DisabledScope(info.IsUpdating))
+                    {
+                        if (GUILayout.Button(info.IsUpdating ? "Installing..." : "Install", GUILayout.Width(90f)))
+                            PackageUpdateChecker.Install(info);
+                    }
+                }
+                else
+                {
+                    using (new EditorGUI.DisabledScope(info.Status != PackageUpdateStatus.UpdateAvailable || info.IsUpdating))
+                    {
+                        if (GUILayout.Button(info.IsUpdating ? "Updating..." : "Update", GUILayout.Width(90f)))
+                            PackageUpdateChecker.Update(info);
+                    }
                 }
 
                 if (GUILayout.Button("Changelog", GUILayout.Width(90f)))
@@ -173,6 +239,72 @@ namespace Tauntastic.Packages.Editor
             }
 
             EditorGUILayout.EndVertical();
+        }
+
+        /// <summary>Selects and pings the folder in the Project window, or shows it in the file browser when it is not an asset folder.</summary>
+        private static void OpenSourceFolder(string projectRelativePath)
+        {
+            if (string.IsNullOrEmpty(projectRelativePath))
+                return;
+
+            UnityEngine.Object folder = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(projectRelativePath);
+            if (folder != null)
+            {
+                Selection.activeObject = folder;
+                EditorGUIUtility.PingObject(folder);
+                return;
+            }
+
+            EditorUtility.RevealInFinder(projectRelativePath);
+        }
+
+        /// <summary>The Dependencies foldout: what this package depends on (child dependencies) and which known packages depend on it (parent dependencies), with indirect ones indented.</summary>
+        private void DrawDependencies(PackageUpdateInfo info)
+        {
+            if (info.Manifest == null)
+                return;
+
+            List<DependencyEntry> children = PackageUpdateChecker.GetDependencies(info);
+            List<DependencyEntry> parents = PackageUpdateChecker.GetDependents(info);
+
+            bool expanded = _dependencyFoldouts.Contains(info.Name);
+            bool now = EditorGUILayout.Foldout(expanded, "Dependencies (" + children.Count + " required, " + parents.Count + " required by)", true);
+            if (now != expanded)
+            {
+                if (now) _dependencyFoldouts.Add(info.Name);
+                else _dependencyFoldouts.Remove(info.Name);
+            }
+
+            if (!now)
+                return;
+
+            EditorGUI.indentLevel++;
+            DrawDependencyList("Depends on (child dependencies)", children, "Nothing: this package has no dependencies.");
+            DrawDependencyList("Required by (parent dependencies)", parents, "No known Tauntastic package depends on it.");
+            EditorGUI.indentLevel--;
+        }
+
+        private static void DrawDependencyList(string title, List<DependencyEntry> entries, string emptyText)
+        {
+            EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
+
+            if (entries.Count == 0)
+            {
+                EditorGUILayout.LabelField(emptyText, EditorStyles.miniLabel);
+                return;
+            }
+
+            foreach (DependencyEntry entry in entries)
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Space((entry.Depth - 1) * _INDENT_PER_LEVEL + 12f);
+                    GUILayout.Label((entry.Depth > 1 ? "└ " : string.Empty) + entry.Name, EditorStyles.label);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.Label(PackageUpdateChecker.DescribeDependency(entry.Name) + (entry.Depth > 1 ? "  (indirect)" : string.Empty),
+                        EditorStyles.miniLabel);
+                }
+            }
         }
 
         /// <summary>Draws a small colored badge with white text.</summary>
